@@ -62,6 +62,33 @@ open class TsLanguageSpec(
 ) : Closeable {
 
     /**
+     * Whether to color brackets by nesting depth (rainbow brackets).
+     *
+     * This is an opt-in feature because it adds extra per-line processing.
+     * Client apps can enable it (and optionally customize color IDs) when creating specs.
+     */
+    var rainbowBracketsEnabled: Boolean = false
+
+    /**
+     * Base color ID for rainbow brackets.
+     * Recommended to be >= 256 (custom color ID range).
+     */
+    var rainbowBracketsBaseColorId: Int = 256
+
+    /**
+     * How many colors are used for bracket depth cycling.
+     */
+    var rainbowBracketsColorCount: Int = 6
+
+    /**
+     * Auto-disable rainbow brackets when document line count is greater than this value.
+     *
+     * - 0: no limit (never auto-disable by line count)
+     * - >0: auto-disable when lineCount > this value
+     */
+    var rainbowBracketsMaxLines: Int = 0
+
+    /**
      * The generated scm source code for querying
      */
     val querySource = localsScmSource + "\n" + highlightScmSource

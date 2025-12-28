@@ -1787,16 +1787,23 @@ public class EditorRenderer {
         
         // Get the end line content to find the closing character
         var endLineContent = getLine(foldRegion.endLine);
-        String endLineText = endLineContent.toString().trim();
-        
-        // Find the closing bracket/brace
+        final String endLineRaw = endLineContent.toString();
+
+        // Find the last non-whitespace char and its column
+        int lastNonWs = endLineRaw.length() - 1;
+        while (lastNonWs >= 0 && Character.isWhitespace(endLineRaw.charAt(lastNonWs))) {
+            lastNonWs--;
+        }
+
         String closingChar = "";
-        if (endLineText.endsWith("}")) {
-            closingChar = "}";
-        } else if (endLineText.endsWith(")")) {
-            closingChar = ")";
-        } else if (endLineText.endsWith("]")) {
-            closingChar = "]";
+        int closingColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_NORMAL);
+        if (lastNonWs >= 0) {
+            final char ch = endLineRaw.charAt(lastNonWs);
+            if (ch == '}' || ch == ')' || ch == ']') {
+                closingChar = String.valueOf(ch);
+                // Resolve color from spans so it can match rainbow brackets even when folded.
+                closingColor = resolveCharForegroundColor(foldRegion.endLine, lastNonWs, closingColor);
+            }
         }
         
         final float placeholderWidth = paintGeneral.measureText(placeholder);
@@ -1824,16 +1831,46 @@ public class EditorRenderer {
         paintGeneral.setColor(editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_COLOR));
         canvas.drawText(placeholder, x, baseline, paintGeneral);
         
-        // Draw the closing bracket with normal text color (no background)
+        // Draw the closing bracket with the resolved color (no background)
         if (!closingChar.isEmpty()) {
             float closingX = x + placeholderWidth + paddingX;
-            paintGeneral.setColor(editor.getColorScheme().getColor(EditorColorScheme.TEXT_NORMAL));
+            paintGeneral.setColor(closingColor);
             canvas.drawText(closingChar, closingX, baseline, paintGeneral);
         }
         
         canvas.restore();
 
         paintGeneral.setColor(oldColor);
+    }
+
+    private int resolveCharForegroundColor(int line, int column, int fallbackColor) {
+        Styles styles = editor.getStyles();
+        if (styles == null || styles.spans == null) {
+            return fallbackColor;
+        }
+        try {
+            Spans.Reader reader = styles.spans.read();
+            List<Span> spans = reader.getSpansOnLine(line);
+            if (spans == null || spans.isEmpty()) {
+                return fallbackColor;
+            }
+            Span current = spans.get(0);
+            for (int i = 1; i < spans.size(); i++) {
+                Span next = spans.get(i);
+                if (next.getColumn() > column) {
+                    break;
+                }
+                current = next;
+            }
+            int colorId = TextStyle.getForegroundColorId(current.getStyle());
+            if (colorId <= 0) {
+                return fallbackColor;
+            }
+            int resolved = editor.getColorScheme().getColor(colorId);
+            return resolved != 0 ? resolved : fallbackColor;
+        } catch (Throwable t) {
+            return fallbackColor;
+        }
     }
 
     protected void drawDiagnosticIndicators(Canvas canvas, float offset) {

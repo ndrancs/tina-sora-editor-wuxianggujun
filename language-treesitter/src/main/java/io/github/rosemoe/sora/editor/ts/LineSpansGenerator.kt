@@ -34,6 +34,7 @@ import io.github.rosemoe.sora.lang.styling.TextStyle
 import io.github.rosemoe.sora.text.CharPosition
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
+import kotlin.math.max
 
 /**
  * Spans generator for tree-sitter. Results are cached.
@@ -54,6 +55,10 @@ class LineSpansGenerator(
     }
 
     private val caches = mutableListOf<SpanCache>()
+
+    private var rainbowDepthCacheVersion: Long = -1L
+    private var rainbowDepthCacheLineCount: Int = -1
+    private var rainbowDepthAtLineStart: IntArray = IntArray(0)
 
     fun queryCache(line: Int): MutableList<Span>? {
         for (i in 0 until caches.size) {
@@ -219,6 +224,7 @@ class LineSpansGenerator(
             val start = content.indexer.getCharPosition(line, 0).index
             val end = start + content.getColumnCount(line)
             spans = captureRegion(start, end)
+            applyRainbowBracketsIfEnabled(line, spans)
             pushCache(line, spans)
         }
 
@@ -234,6 +240,7 @@ class LineSpansGenerator(
             val start = content.indexer.getCharPosition(line, 0).index
             val end = start + content.getColumnCount(line)
             val captured = captureRegion(start, end)
+            applyRainbowBracketsIfEnabled(line, captured)
             pushCache(line, captured)
             return captured.toMutableList()
         }
@@ -247,6 +254,118 @@ class LineSpansGenerator(
     }
 
     override fun getLineCount() = lineCount
+
+    private fun applyRainbowBracketsIfEnabled(line: Int, spans: MutableList<Span>) {
+        if (!languageSpec.rainbowBracketsEnabled) return
+        val colorCount = languageSpec.rainbowBracketsColorCount
+        if (colorCount <= 0) return
+        val maxLines = languageSpec.rainbowBracketsMaxLines
+        if (maxLines > 0 && lineCount > maxLines) return
+        if (line !in 0..<lineCount) return
+
+        val textLine = content.getLineString(line)
+        if (textLine.isEmpty()) return
+        if (spans.isEmpty()) return
+
+        ensureRainbowDepthCache()
+        val startDepth = rainbowDepthAtLineStart.getOrElse(line) { 0 }
+
+        // In some edge cases spans might not start at column 0
+        if (spans[0].column != 0) {
+            spans.add(0, emptySpan(0))
+        }
+
+        val bracketColumns = IntArray(textLine.length)
+        val bracketColorIds = IntArray(textLine.length)
+        var bracketCount = 0
+
+        var depth = startDepth
+        for (col in textLine.indices) {
+            when (textLine[col]) {
+                '(', '[', '{' -> {
+                    bracketColumns[bracketCount] = col
+                    bracketColorIds[bracketCount] = rainbowColorId(depth)
+                    bracketCount++
+                    depth++
+                }
+
+                ')', ']', '}' -> {
+                    depth = max(0, depth - 1)
+                    bracketColumns[bracketCount] = col
+                    bracketColorIds[bracketCount] = rainbowColorId(depth)
+                    bracketCount++
+                }
+            }
+        }
+        if (bracketCount == 0) return
+
+        // Apply by inserting span switches at bracket positions. Process left-to-right.
+        var spanIndex = 0
+        for (i in 0 until bracketCount) {
+            val col = bracketColumns[i]
+            if (col !in 0 until textLine.length) continue
+
+            while (spanIndex + 1 < spans.size && spans[spanIndex + 1].column <= col) {
+                spanIndex++
+            }
+
+            val baseStyle = spans[spanIndex].style
+            val fg = TextStyle.getForegroundColorId(baseStyle)
+            if (fg == EditorColorScheme.COMMENT || fg == EditorColorScheme.LITERAL) {
+                continue
+            }
+
+            // Ensure there's a span starting exactly at this column so that changing style only affects this char.
+            if (spans[spanIndex].column != col) {
+                spans.add(spanIndex + 1, SpanFactory.obtain(col, baseStyle))
+                spanIndex++
+            }
+
+            spans[spanIndex].style = withForeground(baseStyle, bracketColorIds[i])
+
+            val revertCol = col + 1
+            if (revertCol < textLine.length) {
+                val nextIdx = spanIndex + 1
+                if (nextIdx >= spans.size || spans[nextIdx].column > revertCol) {
+                    spans.add(nextIdx, SpanFactory.obtain(revertCol, baseStyle))
+                }
+            }
+        }
+    }
+
+    private fun ensureRainbowDepthCache() {
+        val version = content.documentVersion
+        if (version == rainbowDepthCacheVersion && rainbowDepthCacheLineCount == lineCount) return
+
+        val depths = IntArray(lineCount)
+        var depth = 0
+        for (line in 0 until lineCount) {
+            depths[line] = depth
+            val s = content.getLineString(line)
+            for (ch in s) {
+                when (ch) {
+                    '(', '[', '{' -> depth++
+                    ')', ']', '}' -> depth = max(0, depth - 1)
+                }
+            }
+        }
+
+        rainbowDepthAtLineStart = depths
+        rainbowDepthCacheVersion = version
+        rainbowDepthCacheLineCount = lineCount
+    }
+
+    private fun rainbowColorId(depth: Int): Int {
+        val count = languageSpec.rainbowBracketsColorCount
+        val base = languageSpec.rainbowBracketsBaseColorId
+        if (count <= 0) return base
+        return base + (depth % count)
+    }
+
+    private fun withForeground(style: Long, foregroundColorId: Int): Long {
+        TextStyle.checkColorId(foregroundColorId)
+        return (style and TextStyle.FOREGROUND_BITS.inv()) or foregroundColorId.toLong()
+    }
 }
 
 data class SpanCache(val spans: MutableList<Span>, val line: Int)
