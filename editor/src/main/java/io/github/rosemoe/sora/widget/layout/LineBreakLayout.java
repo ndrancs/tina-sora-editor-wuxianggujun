@@ -272,6 +272,7 @@ public class LineBreakLayout extends AbstractLayout {
         final int line = getLineNumberForRow(row);
         var tr = editor.getRenderer().createTextRow(line);
         int res = tr.getIndexForCursorOffset(xOffset);
+        res = Math.max(0, Math.min(res, text.getColumnCount(line)));
         return IntPair.pack(line, res);
     }
 
@@ -287,7 +288,8 @@ public class LineBreakLayout extends AbstractLayout {
             dest[0] = editor.getRowBottom(line);
         }
         var tr = editor.getRenderer().createTextRow(line);
-        dest[1] = tr.getCursorOffsetForIndex(column);
+        int clampedColumn = Math.max(0, Math.min(column, text.getColumnCount(line)));
+        dest[1] = tr.getCursorOffsetForIndex(clampedColumn);
         return dest;
     }
 

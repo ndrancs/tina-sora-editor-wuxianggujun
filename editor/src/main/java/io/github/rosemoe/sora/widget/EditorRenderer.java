@@ -1801,6 +1801,27 @@ public class EditorRenderer {
         while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
             suffixEnd--;
         }
+        // Ignore common trailing comments so we can still show the actual closing tokens, e.g. `} // end`
+        if (suffixEnd >= 1) {
+            // Block comment at end: `... */`
+            if (suffixEnd >= 1 && endLineRaw.charAt(suffixEnd) == '/' && endLineRaw.charAt(suffixEnd - 1) == '*') {
+                final int start = endLineRaw.lastIndexOf("/*", suffixEnd - 2);
+                if (start >= 0) {
+                    suffixEnd = start - 1;
+                    while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
+                        suffixEnd--;
+                    }
+                }
+            }
+            // Line comment: `... // comment`
+            final int lineComment = endLineRaw.lastIndexOf("//", suffixEnd);
+            if (lineComment >= 0) {
+                suffixEnd = lineComment - 1;
+                while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
+                    suffixEnd--;
+                }
+            }
+        }
 
         String closingSuffix = "";
         int closingSuffixStartColumn = -1;

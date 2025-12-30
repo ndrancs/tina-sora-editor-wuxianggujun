@@ -535,6 +535,18 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         return holdingScrollbarHorizontal || holdingScrollbarVertical;
     }
 
+    private long clampPositionToText(int line, int column) {
+        final var text = editor.getText();
+        final int lineCount = text.getLineCount();
+        if (lineCount <= 0) {
+            return IntPair.pack(0, 0);
+        }
+        line = Math.max(0, Math.min(line, lineCount - 1));
+        final int maxColumn = text.getColumnCount(line);
+        column = Math.max(0, Math.min(column, maxColumn));
+        return IntPair.pack(line, column);
+    }
+
     /**
      * Entry for mouse motion events
      */
@@ -564,6 +576,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                     }
                     var pos = editor.getPointPositionOnScreen(mouseDownX, mouseDownY);
                     int line = IntPair.getFirst(pos), column = IntPair.getSecond(pos);
+                    var clamped = clampPositionToText(line, column);
+                    line = IntPair.getFirst(clamped);
+                    column = IntPair.getSecond(clamped);
                     var charPos = editor.getText().getIndexer().getCharPosition(line, column);
                     if (editor.isTextSelected() && editor.getCursorRange().isPositionInside(charPos) && editor.isScreenPointOnText(mouseDownX, mouseDownY)) {
                         mouseCanMoveText = true;
@@ -586,6 +601,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                 if ((mouseDownButtonState & MotionEvent.BUTTON_PRIMARY) != 0) {
                     var pos = editor.getPointPositionOnScreen(event.getX(), event.getY());
                     int line = IntPair.getFirst(pos), column = IntPair.getSecond(pos);
+                    var clamped = clampPositionToText(line, column);
+                    line = IntPair.getFirst(clamped);
+                    column = IntPair.getSecond(clamped);
                     var charPos = editor.getText().getIndexer().getCharPosition(line, column);
                     if (!mouseClick && !mouseCanMoveText) {
                         var anchor = editor.selectionAnchor;
@@ -604,6 +622,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                     if (mouseCanMoveText && !mouseClick && (mouseDownButtonState & MotionEvent.BUTTON_PRIMARY) != 0) {
                         var pos = editor.getPointPositionOnScreen(event.getX(), event.getY());
                         int line = IntPair.getFirst(pos), column = IntPair.getSecond(pos);
+                        var clamped = clampPositionToText(line, column);
+                        line = IntPair.getFirst(clamped);
+                        column = IntPair.getSecond(clamped);
                         var dest = editor.getText().getIndexer().getCharPosition(line, column);
                         var curRange = editor.getCursorRange();
                         if (!curRange.isPositionInside(dest) && (editor.getKeyMetaStates().isCtrlPressed() || !curRange.getEnd().equals(dest))) {
@@ -929,13 +950,21 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                 int lineIndex = rowInf.lineIndex;
                 var foldRegion = editor.getFoldingManager().getFoldRegion(lineIndex);
                 if (foldRegion != null && foldRegion.collapsed) {
-                    // Calculate the position of the folding placeholder
-                    float textRegionOffset = editor.measureTextRegionOffset();
-                    float lineEndX = textRegionOffset + editor.getLayout().getCharLayoutOffset(lineIndex, editor.getText().getColumnCount(lineIndex))[1];
-                    float clickX = e.getX() + editor.getOffsetX();
-                    
-                    // Check if click is after the line content (in the placeholder area)
-                    if (clickX > lineEndX) {
+                    String placeholder = editor.getProps().foldingPlaceholder;
+                    if (placeholder == null || placeholder.isEmpty()) {
+                        // ignore
+                    } else {
+                        final float paddingX = editor.getDpUnit() * 3f;
+                        final float placeholderWidth = editor.getRenderer().getPaint().measureText(placeholder);
+
+                        // xOffset coordinate
+                        float textRegionOffset = editor.measureTextRegionOffset();
+                        int endColumn = editor.getText().getColumnCount(lineIndex);
+                        float lineEndX = textRegionOffset + editor.getLayout().getCharLayoutOffset(lineIndex, endColumn)[1];
+                        float clickX = e.getX() + editor.getOffsetX();
+
+                        // Only unfold when clicking on the folding placeholder background ("...")
+                        if (clickX >= lineEndX && clickX <= lineEndX + placeholderWidth + paddingX * 2f) {
                         // Unfold the region
                         editor.unfold(lineIndex);
                         notifyLater();
@@ -943,10 +972,14 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                             Log.d(TAG, "tap: unfold via placeholder line=" + lineIndex);
                         }
                         return true;
+                        }
                     }
                 }
             }
         }
+        var clamped = clampPositionToText(line, column);
+        line = IntPair.getFirst(clamped);
+        column = IntPair.getSecond(clamped);
         var position = editor.getText().getIndexer().getCharPosition(line, column);
         if ((dispatchEditorMotionEvent(ClickEvent::new, position, e, region, regionBound) & InterceptTarget.TARGET_EDITOR) != 0) {
             return true;
@@ -988,6 +1021,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         long res = editor.getPointPositionOnScreen(e.getX(), e.getY());
         int line = IntPair.getFirst(res);
         int column = IntPair.getSecond(res);
+        var clamped = clampPositionToText(line, column);
+        line = IntPair.getFirst(clamped);
+        column = IntPair.getSecond(clamped);
         if ((dispatchEditorMotionEvent(LongPressEvent::new, editor.getText().getIndexer().getCharPosition(line, column), e) & InterceptTarget.TARGET_EDITOR) != 0) {
             return;
         }
@@ -1196,6 +1232,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         long res = editor.getPointPositionOnScreen(e.getX(), e.getY());
         int line = IntPair.getFirst(res);
         int column = IntPair.getSecond(res);
+        var clamped = clampPositionToText(line, column);
+        line = IntPair.getFirst(clamped);
+        column = IntPair.getSecond(clamped);
         if ((dispatchEditorMotionEvent(DoubleClickEvent::new, editor.getText().getIndexer().getCharPosition(line, column), e) & InterceptTarget.TARGET_EDITOR) != 0) {
             return true;
         }

@@ -433,17 +433,19 @@ public class WordwrapLayout extends AbstractLayout {
             final int line = editor.isFoldingEnabled() ? editor.getFoldingManager().getLineForVisibleRow(row) : Math.min(text.getLineCount() - 1, row);
             var tr = editor.getRenderer().createTextRow(line);
             int res = tr.getIndexForCursorOffset(xOffset);
+            res = Math.max(0, Math.min(res, text.getColumnCount(line)));
             return IntPair.pack(line, res);
         }
         int row = (int) (yOffset / editor.getRowHeight());
         row = Math.max(0, Math.min(row, rowTable.size() - 1));
         RowRegion region = rowTable.get(row);
         if (region.startColumn != 0) {
-            xOffset -= miniGraphWidth;
+        xOffset -= miniGraphWidth;
         }
         xOffset -= region.getRenderTranslateX(width);
         var tr = editor.getRenderer().createTextRow(row);
         int column = tr.getIndexForCursorOffset(xOffset);
+        column = Math.max(0, Math.min(column, text.getColumnCount(region.line)));
         return IntPair.pack(region.line, column);
     }
 
@@ -460,7 +462,8 @@ public class WordwrapLayout extends AbstractLayout {
                 dest[0] = editor.getRowBottom(line);
             }
             var tr = editor.getRenderer().createTextRow(line);
-            dest[1] = tr.getCursorOffsetForIndex(column);
+            int clampedColumn = Math.max(0, Math.min(column, text.getColumnCount(line)));
+            dest[1] = tr.getCursorOffsetForIndex(clampedColumn);
             return dest;
         }
         int row = findRow(line);
@@ -481,7 +484,8 @@ public class WordwrapLayout extends AbstractLayout {
             }
             dest[0] = editor.getRowBottom(row);
             var tr = editor.getRenderer().createTextRow(row);
-            dest[1] = tr.getCursorOffsetForIndex(column);
+            int clampedColumn = Math.max(0, Math.min(column, text.getColumnCount(line)));
+            dest[1] = tr.getCursorOffsetForIndex(clampedColumn);
             if (region.startColumn != 0) {
                 dest[1] += miniGraphWidth;
             }
