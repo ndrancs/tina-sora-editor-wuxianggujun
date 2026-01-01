@@ -37,6 +37,7 @@ import io.github.rosemoe.sora.lang.completion.filterCompletionItems
 import io.github.rosemoe.sora.lang.format.Formatter
 import io.github.rosemoe.sora.lang.smartEnter.NewlineHandler
 import io.github.rosemoe.sora.lsp.editor.completion.CompletionItemProvider
+import io.github.rosemoe.sora.lsp.editor.completion.CollectingCompletionPublisher
 import io.github.rosemoe.sora.lsp.editor.completion.LspCompletionItem
 import io.github.rosemoe.sora.lsp.editor.format.LspFormatter
 import io.github.rosemoe.sora.lsp.events.EventType
@@ -93,7 +94,23 @@ class LspLanguage(var editor: LspEditor) : Language {
             return;
         }*/
 
+        val wrapper = wrapperLanguage
+        val fallbackItems = if (wrapper != null) {
+            runCatching {
+                val collector = CollectingCompletionPublisher(wrapper.interruptionLevel)
+                wrapper.requireAutoComplete(content, position, collector, extraArguments)
+                collector.snapshot()
+            }.getOrElse { emptyList() }
+        } else {
+            emptyList()
+        }
+
         if (!editor.isConnected) {
+            if (fallbackItems.isEmpty()) return
+            val filtered = filterCompletionItems(content, position, fallbackItems)
+            publisher.setComparator(createCompletionItemComparator(filtered))
+            publisher.addItems(filtered)
+            publisher.updateList()
             return
         }
 
@@ -113,7 +130,9 @@ class LspLanguage(var editor: LspEditor) : Language {
             }
         }
 
-        val completionList = ArrayList<CompletionItem>()
+        val completionList = ArrayList<CompletionItem>(fallbackItems.size + 32).apply {
+            addAll(fallbackItems)
+        }
 
         val serverResultCompletionItems =
             editor.coroutineScope.future {
@@ -134,15 +153,24 @@ class LspLanguage(var editor: LspEditor) : Language {
                             )
                         )
                     }
-                }.exceptionally { throwable: Throwable ->
-                    publisher.cancel()
-                    throw CompletionCancelledException(throwable.message)
                 }.get(Timeout[Timeouts.COMPLETION].toLong(), TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             return
+        } catch (_: Exception) {
+            // Ignore LSP completion failures and keep fallback items
         }
 
-        filterCompletionItems(content, position, completionList).let { filteredList ->
+        val deduped = LinkedHashMap<String, CompletionItem>(completionList.size)
+        for (item in completionList) {
+            val key = buildString {
+                append(item.label?.toString().orEmpty())
+                append('\u0000')
+                append(item.kind?.value ?: -1)
+            }
+            deduped.putIfAbsent(key, item)
+        }
+
+        filterCompletionItems(content, position, deduped.values).let { filteredList ->
             publisher.setComparator(createCompletionItemComparator(filteredList))
             publisher.addItems(filteredList)
         }

@@ -63,6 +63,10 @@ class LspCompletionItem(
         if (labelDetails != null && labelDetails.description?.isNotEmpty() == true) {
             desc = labelDetails.description
         }
+        desc = when (val d = desc?.toString()?.trim()) {
+            null, "" -> "[LSP]"
+            else -> "[LSP] $d"
+        }
         icon = draw(kind ?: CompletionItemKind.Text)
     }
 
