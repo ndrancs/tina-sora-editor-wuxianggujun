@@ -37,6 +37,7 @@ import io.github.rosemoe.sora.lsp.editor.LspProject
 import io.github.rosemoe.sora.lsp.requests.Timeout
 import io.github.rosemoe.sora.lsp.requests.Timeouts
 import io.github.rosemoe.sora.lsp.utils.LSPException
+import io.github.rosemoe.sora.lsp.utils.merge
 import io.github.rosemoe.sora.lsp.utils.override
 import kotlinx.coroutines.launch
 import org.eclipse.lsp4j.ClientCapabilities
@@ -249,6 +250,10 @@ class LanguageServerWrapper(
                             mergeCapabilities(res.capabilities, fallbackCapabilities)
                         effectiveCapabilities = mergedCapabilities
                         res.capabilities = mergedCapabilities
+
+                        // 添加调试日志
+                        Log.d(TAG, "Server capabilities - completionProvider: ${res.capabilities.completionProvider}")
+                        Log.d(TAG, "Merged capabilities - completionProvider: ${mergedCapabilities.completionProvider}")
 
                         requestManager = DefaultRequestManager(
                             this@LanguageServerWrapper,
@@ -568,8 +573,10 @@ class LanguageServerWrapper(
             return primary
         }
         val merged = ServerCapabilities()
+        // 先用 primary 覆盖（服务器返回的实际能力）
         merged.override(primary)
-        merged.override(fallback)
+        // 再用 fallback 补充缺失的能力（只填充 null 的字段）
+        merged.merge(fallback)
         return merged
     }
 

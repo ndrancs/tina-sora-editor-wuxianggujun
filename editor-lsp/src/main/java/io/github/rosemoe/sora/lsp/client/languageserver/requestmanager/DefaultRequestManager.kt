@@ -295,11 +295,16 @@ class DefaultRequestManager(
         if (checkStatus()) {
             try {
                 if (textDocumentOptions?.openClose == true) {
+                    android.util.Log.d("LSP-DidOpen", "Sending didOpen: uri=${params.textDocument.uri}, contentLength=${params.textDocument.text?.length ?: 0}")
                     textDocumentService.didOpen(params)
+                } else {
+                    android.util.Log.w("LSP-DidOpen", "didOpen skipped: openClose=${textDocumentOptions?.openClose}, textDocumentOptions=$textDocumentOptions")
                 }
             } catch (e: Exception) {
                 crashed(e)
             }
+        } else {
+            android.util.Log.w("LSP-DidOpen", "didOpen skipped: server not initialized")
         }
     }
 
@@ -367,14 +372,21 @@ class DefaultRequestManager(
     override fun completion(params: CompletionParams): CompletableFuture<Either<List<CompletionItem>, CompletionList>>? {
         return if (checkStatus()) {
             try {
-                if (serverCapabilities.completionProvider != null) textDocumentService.completion(
-                    params
-                ) else null
+                if (serverCapabilities.completionProvider != null) {
+                    android.util.Log.d("LSP-Completion", "Sending completion request: uri=${params.textDocument.uri}, position=${params.position}")
+                    textDocumentService.completion(params)
+                } else {
+                    android.util.Log.w("LSP-Completion", "completionProvider is null, cannot send completion request")
+                    null
+                }
             } catch (e: Exception) {
                 crashed(e)
                 null
             }
-        } else null
+        } else {
+            android.util.Log.w("LSP-Completion", "Server not initialized, status=${wrapper.status}")
+            null
+        }
     }
 
     override fun resolveCompletionItem(unresolved: CompletionItem): CompletableFuture<CompletionItem>? {
