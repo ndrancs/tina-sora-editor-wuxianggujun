@@ -33,6 +33,7 @@ import io.github.rosemoe.sora.lsp.events.inlayhint.inlayHint
 import io.github.rosemoe.sora.text.CharPosition
 import org.eclipse.lsp4j.ColorInformation
 import org.eclipse.lsp4j.InlayHint
+import org.eclipse.lsp4j.InlayHintKind
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.math.pow
@@ -69,7 +70,11 @@ internal fun curvedTextScale(rawScale: Float): Float {
     }
 }
 
-fun List<InlayHint>.inlayHintToDisplay() = map {
+fun List<InlayHint>.inlayHintToDisplay() =
+    asSequence()
+        // 更接近 CLion：默认展示参数提示，减少类型提示噪声
+        .filter { it.kind == null || it.kind == InlayHintKind.Parameter }
+        .map {
     val text = if (it.label.isLeft) it.label.left else {
         it.label.right[0].value
     }
@@ -78,7 +83,8 @@ fun List<InlayHint>.inlayHintToDisplay() = map {
         it.position.character,
         text
     )
-}
+        }
+        .toList()
 
 fun List<ColorInformation>.colorInfoToDisplay() = map {
     // Always show on start

@@ -32,6 +32,7 @@ import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.highlight.DocumentHighlightEvent
 import io.github.rosemoe.sora.lsp.events.highlight.documentHighlight
 import io.github.rosemoe.sora.lsp.events.hover.hover
+import io.github.rosemoe.sora.lsp.events.signature.signatureHelp
 import io.github.rosemoe.sora.widget.component.EditorAutoCompletion
 import io.github.rosemoe.sora.widget.getComponent
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +45,22 @@ class LspEditorSelectionChangeEvent(private val editor: LspEditor) :
             return
         }
 
-        editor.showSignatureHelp(null)
+        val originEditor = editor.editor ?: return
+        val isInCompletion = originEditor.getComponent<EditorAutoCompletion>().isShowing
+
+        if (!editor.isEnableSignatureHelp) {
+            editor.showSignatureHelp(null)
+        } else if (!isInCompletion) {
+            // 更接近 CLion：光标移动时更新签名帮助（有选择文本时隐藏）
+            if (event.isSelected) {
+                editor.showSignatureHelp(null)
+            } else {
+                editor.coroutineScope.launch(Dispatchers.IO) {
+                    editor.eventManager.emitAsync(EventType.signatureHelp, event.left)
+                }
+            }
+        }
+
         editor.showHover(null)
 
         editor.coroutineScope.launch(Dispatchers.IO) {
@@ -57,11 +73,7 @@ class LspEditorSelectionChangeEvent(private val editor: LspEditor) :
             }
         }
 
-        val originEditor = editor.editor ?: return
-
         val hoverWindow = editor.hoverWindow ?: return
-
-        val isInCompletion = originEditor.getComponent<EditorAutoCompletion>().isShowing
 
         if ((!originEditor.hasMouseHovering() && (!hoverWindow.alwaysShowOnTouchHover || event.isSelected)) || isInCompletion) {
             return

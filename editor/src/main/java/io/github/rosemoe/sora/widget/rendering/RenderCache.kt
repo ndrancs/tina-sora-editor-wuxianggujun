@@ -25,8 +25,7 @@
 package io.github.rosemoe.sora.widget.rendering
 
 import androidx.collection.MutableIntList
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
+import java.util.LinkedHashMap
 
 /**
  * Cache for editor rendering, including line-based data and measure
@@ -38,27 +37,22 @@ import kotlin.concurrent.withLock
  */
 class RenderCache {
     private val lines = MutableIntList()
-    private val cache = mutableListOf<MeasureCacheItem>()
     private var maxCacheCount = 75
+    private var cache = createMeasureCache()
 
-    fun getOrCreateMeasureCache(line: Int): MeasureCacheItem {
-        return queryMeasureCache(line) ?: run {
-            MeasureCacheItem(line, null, 0L).also {
-                cache.add(it)
-                while (cache.size > maxCacheCount && cache.isNotEmpty()) {
-                    cache.removeAt(0)
-                }
+    private fun createMeasureCache(): LinkedHashMap<Int, MeasureCacheItem> {
+        return object : LinkedHashMap<Int, MeasureCacheItem>(maxCacheCount, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, MeasureCacheItem>?): Boolean {
+                return size > maxCacheCount
             }
         }
     }
 
-    fun queryMeasureCache(line: Int) =
-        cache.firstOrNull { it.line == line }.also {
-            if (it != null) {
-                cache.remove(it)
-                cache.add(it)
-            }
-        }
+    fun getOrCreateMeasureCache(line: Int): MeasureCacheItem {
+        return cache[line] ?: MeasureCacheItem(line, null, 0L).also { cache[line] = it }
+    }
+
+    fun queryMeasureCache(line: Int) = cache[line]
 
 
     fun getStyleHash(line: Int) = lines[line]
@@ -69,14 +63,19 @@ class RenderCache {
 
     fun updateForInsertion(startLine: Int, endLine: Int) {
         if (startLine != endLine) {
+            val deltaLines = endLine - startLine
             if (endLine - startLine == 1) {
                 lines.add(startLine, 0)
             } else {
                 lines.addAll(startLine, IntArray(endLine - startLine))
             }
-            cache.forEach {
-                if (it.line > startLine) {
-                    it.line += endLine - startLine
+            if (cache.isNotEmpty()) {
+                val oldCache = cache
+                cache = createMeasureCache()
+                for ((_, item) in oldCache) {
+                    val newLine = if (item.line > startLine) item.line + deltaLines else item.line
+                    item.line = newLine
+                    cache[newLine] = item
                 }
             }
         }
@@ -84,11 +83,21 @@ class RenderCache {
 
     fun updateForDeletion(startLine: Int, endLine: Int) {
         if (startLine != endLine) {
+            val deltaLines = endLine - startLine
             lines.removeRange(startLine, endLine)
-            cache.removeAll { it.line in startLine..endLine }
-            cache.forEach {
-                if (it.line > endLine) {
-                    it.line -= endLine - startLine
+            if (cache.isNotEmpty()) {
+                val oldCache = cache
+                cache = createMeasureCache()
+                for ((_, item) in oldCache) {
+                    when {
+                        item.line in startLine..endLine -> Unit
+                        item.line > endLine -> {
+                            val newLine = item.line - deltaLines
+                            item.line = newLine
+                            cache[newLine] = item
+                        }
+                        else -> cache[item.line] = item
+                    }
                 }
             }
         }

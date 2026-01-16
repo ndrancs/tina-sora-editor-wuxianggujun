@@ -28,6 +28,7 @@ import io.github.rosemoe.sora.lang.completion.CompletionItemKind
 import io.github.rosemoe.sora.lang.completion.SimpleCompletionIconDrawer.draw
 import io.github.rosemoe.sora.lang.completion.snippet.parser.CodeSnippetParser
 import io.github.rosemoe.sora.lsp.editor.LspEventManager
+import io.github.rosemoe.sora.lsp.editor.completion.LspCompletionConfig
 import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.document.applyEdits
 import io.github.rosemoe.sora.lsp.utils.asLspPosition
@@ -50,6 +51,35 @@ class LspCompletionItem(
     completionItem.label,
     completionItem.detail
 ) {
+
+    private companion object {
+        private const val DOLLAR: Char = '$'
+
+        private val TABSTOP_WITH_DEFAULT =
+            Regex("\\$\\{(\\d+):([^}]*)\\}")
+
+        /**
+         * For variadic functions (e.g. printf(...)), clangd often returns snippet like:
+         * `printf(${1:format}, $0)`.
+         *
+         * Keeping the trailing ", $0" forces users to delete the comma when they
+         * don't need extra arguments.
+         */
+        private val TRAILING_COMMA_FINAL_TABSTOP_BEFORE_RPAREN =
+            Regex(",\\s*\\${DOLLAR}0\\)")
+
+        private val TRAILING_COMMA_FINAL_TABSTOP =
+            Regex(",\\s*\\${DOLLAR}0\\b")
+
+        private val FINAL_TABSTOP_AFTER_RPAREN =
+            Regex("\\)\\s*\\${DOLLAR}0\\b")
+
+        private val VARIADIC_ARG_PLACEHOLDER =
+            Regex(",\\s*\\${DOLLAR}\\{\\d+:\\.\\.\\.\\}")
+
+        private val VARIADIC_ARG_LITERAL =
+            Regex(",\\s*\\.\\.\\.")
+    }
 
     init {
         this.prefixLength = prefixLength
@@ -120,7 +150,8 @@ class LspCompletionItem(
         }
 
         if (completionItem.insertTextFormat == InsertTextFormat.Snippet) {
-            val codeSnippet = CodeSnippetParser.parse(textEdit.newText)
+            val snippetText = buildSnippetText(textEdit.newText ?: "")
+            val codeSnippet = CodeSnippetParser.parse(snippetText)
             var startIndex = text.getCharIndex(
                 textEdit.range.start.line,
                 textEdit.range.start.character.coerceAtMost(text.getColumnCount(textEdit.range.start.line))
@@ -166,6 +197,90 @@ class LspCompletionItem(
 
     override fun performCompletion(editor: CodeEditor, text: Content, line: Int, column: Int) {
         // do nothing
+    }
+
+    private fun buildSnippetText(raw: String): String {
+        if (!isFunctionLikeCompletion(raw)) {
+            return sanitizeVariadicSnippetText(raw)
+        }
+
+        val mode = LspCompletionConfig.functionArgPlaceholderMode
+            .coerceIn(
+                LspCompletionConfig.FUNCTION_ARG_PLACEHOLDER_MODE_OFF,
+                LspCompletionConfig.FUNCTION_ARG_PLACEHOLDER_MODE_ALWAYS
+            )
+
+        val transformed = when (mode) {
+            LspCompletionConfig.FUNCTION_ARG_PLACEHOLDER_MODE_OFF -> {
+                toCallSnippetWithoutArgs(raw)
+            }
+
+            LspCompletionConfig.FUNCTION_ARG_PLACEHOLDER_MODE_SMART -> {
+                stripAllArgDefaults(raw)
+            }
+
+            else -> {
+                raw
+            }
+        }
+
+        return sanitizeVariadicSnippetText(transformed)
+    }
+
+    private fun isFunctionLikeCompletion(rawSnippet: String): Boolean {
+        val kind = completionItem.kind
+        val isFunctionKind = kind == org.eclipse.lsp4j.CompletionItemKind.Function ||
+            kind == org.eclipse.lsp4j.CompletionItemKind.Method ||
+            kind == org.eclipse.lsp4j.CompletionItemKind.Constructor
+
+        if (!isFunctionKind) return false
+
+        val open = rawSnippet.indexOf('(')
+        val close = rawSnippet.lastIndexOf(')')
+        return open >= 0 && close > open
+    }
+
+    private fun toCallSnippetWithoutArgs(rawSnippet: String): String {
+        val open = rawSnippet.indexOf('(')
+        val close = rawSnippet.lastIndexOf(')')
+        if (open < 0 || close <= open) return rawSnippet
+
+        // 只保留 “函数名 + ()”，并把 $0 放进括号内
+        val prefix = rawSnippet.substring(0, open)
+        return "$prefix(${DOLLAR}0)"
+    }
+
+    private fun stripAllArgDefaults(rawSnippet: String): String {
+        // CLion 风格：不插入任何参数名，只保留 Tab 跳转
+        return TABSTOP_WITH_DEFAULT.replace(rawSnippet) { match ->
+            val index = match.groupValues[1]
+            "${DOLLAR}${index}"
+        }
+    }
+
+    private fun sanitizeVariadicSnippetText(raw: String): String {
+        // Only trim for variadic functions (e.g. printf(...))
+        val isVariadic =
+            completionItem.detail?.contains("...") == true ||
+                completionItem.label?.contains("...") == true ||
+                completionItem.labelDetails?.description?.contains("...") == true
+
+        if (!isVariadic) return raw
+
+        var out = raw
+
+        // Remove explicit variadic placeholder if server provided it
+        out = VARIADIC_ARG_PLACEHOLDER.replace(out, "")
+        out = VARIADIC_ARG_LITERAL.replace(out, "")
+
+        // `printf(${1:format}, $0)` -> `printf(${1:format}$0)`
+        out = TRAILING_COMMA_FINAL_TABSTOP_BEFORE_RPAREN.replace(out) { "${DOLLAR}0)" }
+        out = TRAILING_COMMA_FINAL_TABSTOP.replace(out) { "${DOLLAR}0" }
+
+        // `printf(${1:format})$0` -> `printf(${1:format}$0)`
+        out = FINAL_TABSTOP_AFTER_RPAREN.replace(out) { "${DOLLAR}0)" }
+
+        return out
     }
 }
 

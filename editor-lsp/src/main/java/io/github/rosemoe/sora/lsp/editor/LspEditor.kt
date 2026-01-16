@@ -122,7 +122,7 @@ class LspEditor(
             currentEditor.setEditorLanguage(currentLanguage)
             uiDelegate.attachEditor(currentEditor)
 
-            if (isEnableInlayHint) {
+            if (isConnected && isEnableInlayHint) {
                 coroutineScope.launch {
                     this@LspEditor.requestInlayHint(CharPosition(0, 0))
                     this@LspEditor.requestDocumentColor()
@@ -209,7 +209,7 @@ class LspEditor(
         get() = uiDelegate.isEnableInlayHint
         set(value) {
             uiDelegate.isEnableInlayHint = value
-            if (value) {
+            if (value && isConnected) {
                 coroutineScope.launch {
                     this@LspEditor.requestInlayHint(CharPosition(0, 0))
                     this@LspEditor.requestDocumentColor()
@@ -404,7 +404,7 @@ class LspEditor(
 
     fun hitReTrigger(eventText: CharSequence): Boolean {
         for (trigger in signatureHelpReTriggers) {
-            if (trigger.contains(eventText)) {
+            if (eventText.contains(trigger)) {
                 return true
             }
         }
@@ -413,7 +413,7 @@ class LspEditor(
 
     fun hitTrigger(eventText: CharSequence): Boolean {
         for (trigger in signatureHelpTriggers) {
-            if (trigger.contains(eventText)) {
+            if (eventText.contains(trigger)) {
                 return true
             }
         }

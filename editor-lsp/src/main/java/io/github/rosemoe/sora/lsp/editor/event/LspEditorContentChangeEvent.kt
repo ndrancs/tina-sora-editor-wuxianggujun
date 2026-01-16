@@ -57,10 +57,15 @@ class LspEditorContentChangeEvent(private val editor: LspEditor) :
             // send to server
             editor.eventManager.emitAsync(EventType.documentChange, event)
 
-            if (editor.hitReTrigger(event.changedText)) {
-                editor.showSignatureHelp(null)
-            } else {
-                editor.eventManager.emitAsync(EventType.signatureHelp, event.changeStart)
+            if (editor.isEnableSignatureHelp) {
+                val shouldRequest =
+                    editor.hitTrigger(event.changedText) ||
+                        editor.hitReTrigger(event.changedText) ||
+                        editor.isShowSignatureHelp
+
+                if (shouldRequest) {
+                    editor.eventManager.emitAsync(EventType.signatureHelp, event.changeStart)
+                }
             }
 
             editor.eventManager.emitAsync(EventType.hover, event.changeStart)
