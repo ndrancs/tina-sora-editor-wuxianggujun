@@ -75,6 +75,7 @@ import io.github.rosemoe.sora.lang.styling.color.ResolvableColor;
 import io.github.rosemoe.sora.lang.styling.inlayHint.InlayHint;
 import io.github.rosemoe.sora.lang.styling.line.LineAnchorStyle;
 import io.github.rosemoe.sora.lang.styling.line.LineBackground;
+import io.github.rosemoe.sora.lang.styling.line.LineBookmark;
 import io.github.rosemoe.sora.lang.styling.line.LineBreakpoint;
 import io.github.rosemoe.sora.lang.styling.line.LineGutterBackground;
 import io.github.rosemoe.sora.lang.styling.line.LineSideIcon;
@@ -925,11 +926,14 @@ public class EditorRenderer {
             numberWidth = Math.max(0f, width - (iconSize + padding * 2f));
         }
         
-        // Check if there's a breakpoint on this line
+        // Check if there's a breakpoint/bookmark on this line
         var breakpoint = getLineStyle(lineIndex, LineBreakpoint.class);
+        var bookmark = getLineStyle(lineIndex, LineBookmark.class);
         if (breakpoint != null) {
             // Draw breakpoint circle instead of line number
             drawBreakpointCircle(canvas, row, offsetX, numberWidth, breakpoint);
+        } else if (bookmark != null) {
+            drawBookmarkFlag(canvas, row, offsetX, numberWidth, bookmark);
         } else {
             // Draw normal line number
             if (paintOther.getTextAlign() != editor.getLineNumberAlign()) {
@@ -1927,6 +1931,39 @@ public class EditorRenderer {
         } catch (Throwable t) {
             return fallbackColor;
         }
+    }
+
+    /**
+     * Draw a bookmark flag in place of the line number
+     */
+    private void drawBookmarkFlag(Canvas canvas, int row, float offsetX, float numberWidth, LineBookmark bookmark) {
+        float rowHeight = editor.getRowHeight();
+        float size = rowHeight * 0.75f;
+
+        float centerX = offsetX + numberWidth / 2f;
+        float centerY = (editor.getRowBottom(row) + editor.getRowTop(row)) / 2f - editor.getOffsetY();
+
+        float left = centerX - size / 2f;
+        float top = centerY - size / 2f;
+        float right = centerX + size / 2f;
+        float bottom = centerY + size / 2f;
+
+        int bookmarkColor = bookmark.getColor().resolve(editor.getColorScheme());
+        if (!bookmark.getEnabled()) {
+            bookmarkColor = (bookmarkColor & 0x00FFFFFF) | 0x80000000;
+        }
+
+        paintGeneral.setColor(bookmarkColor);
+
+        final float notch = size * 0.35f;
+        tmpPath.reset();
+        tmpPath.moveTo(left, top);
+        tmpPath.lineTo(right, top);
+        tmpPath.lineTo(right, bottom);
+        tmpPath.lineTo(centerX, bottom - notch);
+        tmpPath.lineTo(left, bottom);
+        tmpPath.close();
+        canvas.drawPath(tmpPath, paintGeneral);
     }
 
     protected void drawDiagnosticIndicators(Canvas canvas, float offset) {
