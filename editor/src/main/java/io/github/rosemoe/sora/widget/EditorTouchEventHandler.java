@@ -1117,6 +1117,8 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onFling(MotionEvent e1, @NonNull MotionEvent e2, float velocityX, float velocityY) {
+        final float vx0 = velocityX;
+        final float vy0 = velocityY;
         if (editor.getProps().singleDirectionFling) {
             if (Math.abs(velocityX) > Math.abs(velocityY)) {
                 velocityY = 0;
@@ -1126,6 +1128,15 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         }
         if (!editor.getProps().scrollFling) {
             return false;
+        }
+        if (editor.getProps().foldingDebugLogEnabled) {
+            Log.d(TAG, "onFling v0=(" + vx0 + "," + vy0 + ") v=(" + velocityX + "," + velocityY + ")"
+                    + " wordwrap=" + editor.isWordwrap()
+                    + " singleDirectionFling=" + editor.getProps().singleDirectionFling
+                    + " scrollFling=" + editor.getProps().scrollFling
+                    + " off=(" + scroller.getCurrX() + "," + scroller.getCurrY() + ")"
+                    + " max=(" + editor.getScrollMaxX() + "," + editor.getScrollMaxY() + ")"
+            );
         }
         // If we do not finish it here, it can produce a high speed and cause the final scroll range to be broken, even a NaN for velocity
         scroller.forceFinished(true);
@@ -1147,7 +1158,7 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         editor.dispatchEvent(new ScrollEvent(editor, scroller.getCurrX(),
                 scroller.getCurrY(), scroller.getFinalX(), scroller.getFinalY(), ScrollEvent.CAUSE_USER_FLING));
         editor.postInvalidateOnAnimation();
-        return false;
+        return true;
     }
 
     @Override
