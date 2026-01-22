@@ -47,10 +47,6 @@ internal class LspEditorDelegate(private val editor: LspEditor) {
 
 
         for (info in sessionInfos) {
-            if (info.wrapper.status == ServerStatus.INITIALIZED) {
-                continue
-            }
-
             runCatching {
                 info.wrapper.start()
                 val capabilities = info.wrapper.getServerCapabilities()

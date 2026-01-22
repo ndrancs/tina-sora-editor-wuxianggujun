@@ -536,10 +536,12 @@ class LanguageServerWrapper(
 
 
     private fun reconnect() {
-        // Need to copy by value since connected editors gets cleared during 'stop()' invocation.
+        // Need to copy by value since connectedEditors gets cleared during 'stop()' invocation.
+        val editors = connectedEditors.toList()
         stop(false)
-        for (editor in connectedEditors) {
+        for (editor in editors) {
             connect(editor)
+            runCatching { editor.openDocumentBlocking() }
         }
     }
 

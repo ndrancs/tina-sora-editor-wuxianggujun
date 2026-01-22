@@ -48,8 +48,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.eclipse.lsp4j.InlayHint
 import org.eclipse.lsp4j.InlayHintParams
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CancellationException
 import kotlin.math.max
 import kotlin.math.min
 
@@ -62,7 +64,15 @@ class InlayHintEvent : AsyncEventListener() {
 
     override val isAsync = true
 
+    private val pendingRequests = ConcurrentHashMap<String, CompletableFuture<*>>()
     private val requestFlows = ConcurrentHashMap<String, MutableSharedFlow<InlayHintRequest>>()
+
+    private companion object {
+        private const val TAG = "LSP client"
+        private const val INLAY_HINT_DEBOUNCE_MS = 180L
+        private const val WINDOW_LINES = 200
+        private const val LSP_REQUEST_CANCELLED = -32800
+    }
 
     data class InlayHintRequest(
         val editor: LspEditor,
@@ -83,7 +93,7 @@ class InlayHintEvent : AsyncEventListener() {
 
             coroutineScope.launch(Dispatchers.Main) {
                 flow
-                    .debounce(50)
+                    .debounce(INLAY_HINT_DEBOUNCE_MS)
                     .collect { request ->
                         processInlayHintRequest(request)
                     }
@@ -111,10 +121,10 @@ class InlayHintEvent : AsyncEventListener() {
 
             val requestManager = editor.requestManager ?: return@withContext
 
-            // Request over 500 lines for current window
+            // Request inlay hints around current position
 
-            val upperLine = max(0, position.line - 500)
-            val lowerLine = min(content.lineCount - 1, position.line + 500)
+            val upperLine = max(0, position.line - WINDOW_LINES)
+            val lowerLine = min(content.lineCount - 1, position.line + WINDOW_LINES)
 
             val inlayHintParams = InlayHintParams(
                 editor.uri.createTextDocumentIdentifier(),
@@ -129,34 +139,48 @@ class InlayHintEvent : AsyncEventListener() {
                 )
             )
 
+            val uri = editor.uri.toString()
             val future = requestManager.inlayHint(inlayHintParams) ?: return@withContext
+
+            pendingRequests.put(uri, future)?.cancel(true)
 
             this@InlayHintEvent.future = future.thenAccept { }
 
 
             try {
-                val inlayHints: List<InlayHint>?
+                val inlayHints: List<InlayHint?>?
 
                 withTimeout(Timeout[Timeouts.INLAY_HINT].toLong()) {
                     inlayHints = future.await()
                 }
 
-                if (inlayHints == null || inlayHints.isEmpty()) {
+                val cleaned = inlayHints.orEmpty().filterNotNull()
+                if (cleaned.isEmpty()) {
                     editor.showInlayHints(null)
                     return@withContext
                 }
 
-                editor.showInlayHints(inlayHints)
+                editor.showInlayHints(cleaned)
+            } catch (_: CancellationException) {
+                // The document was edited again; ignore cancelled/stale requests.
+            } catch (exception: ResponseErrorException) {
+                // clangd may cancel in-flight requests when document is modified.
+                val code = exception.responseError?.code
+                val cancelled = code == LSP_REQUEST_CANCELLED ||
+                    exception.message?.contains("cancel", ignoreCase = true) == true
+                if (!cancelled) {
+                    Log.e(TAG, "InlayHint request failed", exception)
+                }
             } catch (exception: Exception) {
-                // throw?
-                exception.printStackTrace()
-                Log.e("LSP client", "show inlay hint timeout", exception)
+                Log.e(TAG, "InlayHint request failed", exception)
             }
         }
 
     override fun dispose() {
         future?.cancel(true)
         future = null
+        pendingRequests.values.forEach { it.cancel(true) }
+        pendingRequests.clear()
         requestFlows.clear()
     }
 

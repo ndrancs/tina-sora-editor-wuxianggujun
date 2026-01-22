@@ -1046,12 +1046,18 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                 distanceX = 0;
             }
         }
-        int endX = scroller.getCurrX() + (int) distanceX;
-        int endY = scroller.getCurrY() + (int) distanceY;
+        final int currX = scroller.getCurrX();
+        final int currY = scroller.getCurrY();
+        final int maxX = editor.getScrollMaxX();
+        final int maxY = editor.getScrollMaxY();
+        final int rawEndX = currX + (int) distanceX;
+        final int rawEndY = currY + (int) distanceY;
+        int endX = rawEndX;
+        int endY = rawEndY;
         endX = Math.max(endX, 0);
         endY = Math.max(endY, 0);
-        endY = Math.min(endY, editor.getScrollMaxY());
-        endX = Math.min(endX, editor.getScrollMaxX());
+        endY = Math.min(endY, maxY);
+        endX = Math.min(endX, maxX);
         boolean notifyY = true;
         boolean notifyX = true;
         if (!editor.getVerticalEdgeEffect().isFinished()) {
@@ -1088,26 +1094,34 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
             }
             notifyX = false;
         }
-        scroller.startScroll(scroller.getCurrX(),
-                scroller.getCurrY(),
-                endX - scroller.getCurrX(),
-                endY - scroller.getCurrY(), 0);
+        scroller.startScroll(currX,
+                currY,
+                endX - currX,
+                endY - currY, 0);
         final float minOverPull = 2f;
-        if (notifyY && scroller.getCurrY() + distanceY < -minOverPull) {
-            editor.getVerticalEdgeEffect().onPull(-distanceY / editor.getMeasuredHeight(), Math.max(0, Math.min(1, e2.getX() / editor.getWidth())));
-            glowTopOrBottom = false;
+        if (notifyY) {
+            final float displacementX = Math.max(0, Math.min(1, e2.getX() / editor.getWidth()));
+            final float overTop = Math.max(0, -rawEndY);
+            final float overBottom = Math.max(0, rawEndY - maxY);
+            if (overTop > minOverPull) {
+                editor.getVerticalEdgeEffect().onPull(overTop / editor.getMeasuredHeight(), displacementX);
+                glowTopOrBottom = false;
+            } else if (overBottom > minOverPull) {
+                editor.getVerticalEdgeEffect().onPull(overBottom / editor.getMeasuredHeight(), displacementX);
+                glowTopOrBottom = true;
+            }
         }
-        if (notifyY && scroller.getCurrY() + distanceY > editor.getScrollMaxY() + minOverPull) {
-            editor.getVerticalEdgeEffect().onPull(distanceY / editor.getMeasuredHeight(), Math.max(0, Math.min(1, e2.getX() / editor.getWidth())));
-            glowTopOrBottom = true;
-        }
-        if (notifyX && scroller.getCurrX() + distanceX < -minOverPull) {
-            editor.getHorizontalEdgeEffect().onPull(-distanceX / editor.getMeasuredWidth(), Math.max(0, Math.min(1, e2.getY() / editor.getHeight())));
-            glowLeftOrRight = false;
-        }
-        if (notifyX && scroller.getCurrX() + distanceX > editor.getScrollMaxX() + minOverPull) {
-            editor.getHorizontalEdgeEffect().onPull(distanceX / editor.getMeasuredWidth(), Math.max(0, Math.min(1, e2.getY() / editor.getHeight())));
-            glowLeftOrRight = true;
+        if (notifyX) {
+            final float displacementY = Math.max(0, Math.min(1, e2.getY() / editor.getHeight()));
+            final float overLeft = Math.max(0, -rawEndX);
+            final float overRight = Math.max(0, rawEndX - maxX);
+            if (overLeft > minOverPull) {
+                editor.getHorizontalEdgeEffect().onPull(overLeft / editor.getMeasuredWidth(), displacementY);
+                glowLeftOrRight = false;
+            } else if (overRight > minOverPull) {
+                editor.getHorizontalEdgeEffect().onPull(overRight / editor.getMeasuredWidth(), displacementY);
+                glowLeftOrRight = true;
+            }
         }
         editor.invalidate();
         editor.dispatchEvent(new ScrollEvent(editor, scroller.getCurrX(),
