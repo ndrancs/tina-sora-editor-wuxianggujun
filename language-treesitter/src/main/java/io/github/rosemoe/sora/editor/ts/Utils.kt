@@ -37,7 +37,10 @@ fun CharPosition.toTSPoint(): TSPoint = TSPoint.create(line, column * 2)
 
 fun TSQuery.validateOrThrow(name: String = "unknown") {
     if (errorType != TSQueryError.None) {
-        throw IllegalArgumentException("query(name:$name) parsing failed: ${errorType.name} at text offset $errorOffset")
+        val errorMsg = "query(name:$name) parsing failed: ${errorType.name} at text offset $errorOffset"
+        android.util.Log.e("TSQuery", errorMsg)
+        android.util.Log.e("TSQuery", "Error details: errorType=${errorType}, errorOffset=$errorOffset")
+        throw IllegalArgumentException(errorMsg)
     }
 }
 

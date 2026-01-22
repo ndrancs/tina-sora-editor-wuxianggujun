@@ -152,6 +152,28 @@ open class TsLanguageSpec(
                 val region = if (tsQuery.errorOffset < highlightScmOffset) "locals" else "highlight"
                 val offset =
                     if (tsQuery.errorOffset < highlightScmOffset) tsQuery.errorOffset else tsQuery.errorOffset - highlightScmOffset
+                
+                // Print detailed error information
+                android.util.Log.e("TsLanguageSpec", "=== Tree-sitter Query Error ===")
+                android.util.Log.e("TsLanguageSpec", "Error Type: ${tsQuery.errorType.name}")
+                android.util.Log.e("TsLanguageSpec", "Region: $region")
+                android.util.Log.e("TsLanguageSpec", "Offset in region: $offset")
+                android.util.Log.e("TsLanguageSpec", "Total offset: ${tsQuery.errorOffset}")
+                android.util.Log.e("TsLanguageSpec", "highlightScmOffset: $highlightScmOffset")
+                
+                // Print context around the error
+                val contextStart = maxOf(0, offset - 50)
+                val contextEnd = minOf(querySource.length, offset + 50)
+                val sourceToShow = if (region == "locals") localsScmSource else highlightScmSource
+                if (offset < sourceToShow.length) {
+                    val start = maxOf(0, offset - 50)
+                    val end = minOf(sourceToShow.length, offset + 50)
+                    val context = sourceToShow.substring(start, end)
+                    android.util.Log.e("TsLanguageSpec", "Context around error:")
+                    android.util.Log.e("TsLanguageSpec", context)
+                    android.util.Log.e("TsLanguageSpec", " ".repeat(minOf(50, offset - start)) + "^")
+                }
+                
                 throw IllegalArgumentException("bad scm sources: error ${tsQuery.errorType.name} occurs in $region range at offset $offset")
             }
             if (!tsQuery.canAccess()) {
@@ -202,11 +224,13 @@ open class TsLanguageSpec(
         highlightPatternOffset = highlightOffset
     }
 
+    @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
         tsQuery.close()
         blocksQuery.close()
         bracketsQuery.close()
-        closed = true
     }
 
 }

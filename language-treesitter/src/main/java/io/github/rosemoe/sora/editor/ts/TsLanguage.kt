@@ -61,9 +61,10 @@ open class TsLanguage(
 
     protected var tsTheme = TsThemeBuilder(languageSpec.tsQuery).apply { themeDescription() }.theme
 
-    open val analyzer by lazy {
-        TsAnalyzeManager(languageSpec, tsTheme)
-    }
+    private val analyzerLazy = lazy { TsAnalyzeManager(languageSpec, tsTheme) }
+
+    open val analyzer: TsAnalyzeManager
+        get() = analyzerLazy.value
 
     /**
      * Update tree-sitter colorizing theme with the given description
@@ -109,7 +110,27 @@ open class TsLanguage(
     override fun getQuickQuoteHandler() = null
 
     override fun destroy() {
-        languageSpec.close()
+        if (languageSpec.closed) return
+
+        val workerThread = if (analyzerLazy.isInitialized()) analyzer.thread else null
+        if (workerThread != null && workerThread.isAlive) {
+            Thread(
+                {
+                    try {
+                        workerThread.join()
+                    } catch (_: InterruptedException) {
+                        // ignored
+                    }
+                    languageSpec.close()
+                },
+                "TsLanguageSpecCloser"
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        } else {
+            languageSpec.close()
+        }
     }
 
 }

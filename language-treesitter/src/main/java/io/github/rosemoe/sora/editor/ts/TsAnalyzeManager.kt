@@ -122,8 +122,8 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
     protected fun destroyPreviousRes() {
         thread?.let {
             if (it.isAlive) {
-                it.interrupt()
                 it.abort = true
+                it.interrupt()
             }
         }
         val spans = styles.spans
@@ -171,6 +171,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
         }
 
         fun updateStyles() {
+            if (abort || isInterrupted || languageSpec.closed) {
+                return
+            }
             val scopedVariables = TsScopedVariables(tree!!, localText, languageSpec)
             if (thread == this && messageQueue.isEmpty()) {
                 val oldTree = (styles.spans as LineSpansGenerator?)?.safeTree
@@ -198,6 +201,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
         }
 
         fun updateCodeBlocks() {
+            if (abort || isInterrupted || languageSpec.closed) {
+                return
+            }
             if (languageSpec.blocksQuery.patternCount == 0 || !languageSpec.blocksQuery.canAccess()) {
                 return
             }
@@ -205,7 +211,7 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
             TSQueryCursor.create().use {
                 it.exec(languageSpec.blocksQuery, tree!!.rootNode)
                 var match = it.nextMatch()
-                while (match != null) {
+                while (match != null && !abort && !isInterrupted && !languageSpec.closed) {
                     if (languageSpec.blocksPredicator.doPredicate(
                             languageSpec.predicates,
                             localText,
@@ -249,6 +255,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                     match = it.nextMatch()
                 }
             }
+            if (abort || isInterrupted || languageSpec.closed) {
+                return
+            }
             // sequence should be preferred here in order to avoid allocating multiple lists and sets
             val distinct = blocks.asSequence().distinct().toMutableList()
             styles.blocks = distinct
@@ -277,7 +286,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                         localText.append(msg.obj!! as String)
                         if (!abort && !isInterrupted) {
                             tree = parser.parseString(localText)
-                            updateStyles()
+                            if (!abort && !isInterrupted && !languageSpec.closed) {
+                                updateStyles()
+                            }
                         }
                     }
 
@@ -298,7 +309,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                             }
                             tree = parser.parseString(t, localText)
                             t.close()
-                            updateStyles()
+                            if (!abort && !isInterrupted && !languageSpec.closed) {
+                                updateStyles()
+                            }
                         }
                     }
                 }
