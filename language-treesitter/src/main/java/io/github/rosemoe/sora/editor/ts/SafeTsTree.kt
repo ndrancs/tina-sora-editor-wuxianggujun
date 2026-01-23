@@ -66,6 +66,26 @@ class SafeTsTree(private val tree: TSTree) : AutoCloseable {
     }
 
     /**
+     * Try to access the tree without blocking. If the lock is not available, return null immediately.
+     * This is useful for rendering threads that should not block on lock contention.
+     *
+     * @return the result for executing the given [block], or null if the lock is not available
+     */
+    fun <R> tryAccessTree(block: (tree: TreeAccessor) -> R): R? {
+        if (!lock.tryLock()) {
+            return null
+        }
+        try {
+            val accessor = TreeAccessor()
+            val result = block(accessor)
+            accessor.accessible = false
+            return result
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /**
      * Make access to the tree if the tree is not currently closed.
      *
      * @see accessTree

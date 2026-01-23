@@ -638,13 +638,23 @@ class EditorInputConnection extends BaseInputConnection {
         if (editor.getProps().disallowSuggestions) {
             return new SurroundingText("", 0, 0, -1);
         }
+        // IME <-> App 的 InputConnection 交互走 Binder。
+        // 某些 IME 可能请求非常大的 before/after 范围；若直接返回全文，会触发 Binder transaction too large。
+        // 这里将返回文本限制在 maxIPCTextLength 以内，避免大文件场景下崩溃/无响应。
+        final int maxIpc = editor.getProps().maxIPCTextLength;
+        if (maxIpc <= 0) {
+            return new SurroundingText("", 0, 0, -1);
+        }
         if ((beforeLength | afterLength) < 0) {
             throw new IllegalArgumentException("length < 0");
         }
+        if (beforeLength > maxIpc) beforeLength = maxIpc;
+        afterLength = Math.min(afterLength, Math.max(0, maxIpc - beforeLength));
+
         int startOffset = Math.max(0, getCursor().getLeft() - beforeLength);
         var selStart = getCursor().getLeft();
         startOffset = Math.min(startOffset, selStart);
-        var text = getTextRegionUnlimited(startOffset, Math.min(editor.getText().length(), getCursor().getRight() + afterLength), flags);
+        var text = getTextRegion(startOffset, Math.min(editor.getText().length(), getCursor().getRight() + afterLength), flags);
         return new SurroundingText(text, getCursor().getLeft() - startOffset, getCursor().getRight() - startOffset, startOffset);
     }
 

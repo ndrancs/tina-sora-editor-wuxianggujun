@@ -51,14 +51,139 @@ class LineSpansGenerator(
 ) : Spans {
 
     companion object {
-        const val CACHE_THRESHOLD = 60
+        /**
+         * Default visible lines per screen (estimated).
+         * This is used as a baseline for prefetch calculations.
+         */
+        const val DEFAULT_VISIBLE_LINES = 40
+
+        /**
+         * Prefetch multiplier: how many screens worth of lines to prefetch
+         * in the scroll direction. 1.5 means prefetch 1.5 screens ahead.
+         */
+        const val PREFETCH_MULTIPLIER = 1.5f
+
+        /**
+         * Minimum cache size to maintain (in lines).
+         * This ensures we always have some buffer even when not scrolling.
+         */
+        const val MIN_CACHE_SIZE = 60
     }
 
     private val caches = mutableListOf<SpanCache>()
 
+    // Scroll direction tracking
+    private var lastAccessedLine = -1
+    private var scrollDirection = 0 // -1 = up, 0 = unknown, 1 = down
+    private var consecutiveDirectionCount = 0
+
+    // Dynamic cache management based on visible area
+    private var estimatedVisibleLines = DEFAULT_VISIBLE_LINES
+    private var cacheRangeStart = 0
+    private var cacheRangeEnd = 0
+
     private var rainbowDepthCacheVersion: Long = -1L
     private var rainbowDepthCacheLineCount: Int = -1
     private var rainbowDepthAtLineStart: IntArray = IntArray(0)
+
+    /**
+     * Update scroll direction based on line access pattern.
+     * Returns the detected scroll direction: -1 (up), 0 (unknown), 1 (down)
+     */
+    private fun updateScrollDirection(line: Int): Int {
+        if (lastAccessedLine < 0) {
+            lastAccessedLine = line
+            return 0
+        }
+
+        val delta = line - lastAccessedLine
+        lastAccessedLine = line
+
+        // Ignore small jumps (could be random access)
+        if (kotlin.math.abs(delta) <= 2) {
+            return scrollDirection
+        }
+
+        val newDirection = if (delta > 0) 1 else -1
+
+        if (newDirection == scrollDirection) {
+            consecutiveDirectionCount++
+        } else {
+            scrollDirection = newDirection
+            consecutiveDirectionCount = 1
+        }
+
+        return scrollDirection
+    }
+
+    /**
+     * Calculate the optimal cache range based on current position and scroll direction.
+     * Returns Pair(startLine, endLine) for the cache range.
+     */
+    private fun calculateCacheRange(currentLine: Int): Pair<Int, Int> {
+        val prefetchLines = (estimatedVisibleLines * PREFETCH_MULTIPLIER).toInt()
+        val bufferLines = estimatedVisibleLines / 2
+
+        val start: Int
+        val end: Int
+
+        when (scrollDirection) {
+            1 -> {
+                // Scrolling down: prefetch more lines below
+                start = (currentLine - bufferLines).coerceAtLeast(0)
+                end = (currentLine + prefetchLines).coerceAtMost(lineCount - 1)
+            }
+            -1 -> {
+                // Scrolling up: prefetch more lines above
+                start = (currentLine - prefetchLines).coerceAtLeast(0)
+                end = (currentLine + bufferLines).coerceAtMost(lineCount - 1)
+            }
+            else -> {
+                // Unknown direction: balanced prefetch
+                start = (currentLine - bufferLines).coerceAtLeast(0)
+                end = (currentLine + bufferLines).coerceAtMost(lineCount - 1)
+            }
+        }
+
+        return Pair(start, end)
+    }
+
+    /**
+     * Check if a line is within the current cache range.
+     */
+    private fun isInCacheRange(line: Int): Boolean {
+        return line in cacheRangeStart..cacheRangeEnd
+    }
+
+    /**
+     * Evict cache entries that are outside the optimal range.
+     * Prioritizes evicting lines in the opposite direction of scroll.
+     */
+    private fun evictOutOfRangeCache() {
+        if (caches.isEmpty()) return
+
+        // Calculate max cache size based on visible lines
+        val maxCacheSize = kotlin.math.max(
+            MIN_CACHE_SIZE,
+            (estimatedVisibleLines * (1 + PREFETCH_MULTIPLIER * 2)).toInt()
+        )
+
+        // Remove entries outside the cache range, starting from the end (oldest)
+        val iterator = caches.iterator()
+        var removed = 0
+        while (iterator.hasNext() && caches.size - removed > maxCacheSize) {
+            val cache = iterator.next()
+            if (!isInCacheRange(cache.line)) {
+                iterator.remove()
+                removed++
+            }
+        }
+
+        // If still over limit, remove from the end
+        while (caches.size > maxCacheSize) {
+            caches.removeAt(caches.size - 1)
+        }
+    }
 
     fun queryCache(line: Int): MutableList<Span>? {
         for (i in 0 until caches.size) {
@@ -73,13 +198,17 @@ class LineSpansGenerator(
     }
 
     fun pushCache(line: Int, spans: MutableList<Span>) {
-        while (caches.size >= CACHE_THRESHOLD) {
-            caches.removeAt(caches.size - 1)
-        }
+        // Evict out-of-range entries first
+        evictOutOfRangeCache()
         caches.add(0, SpanCache(spans, line))
     }
 
-    fun captureRegion(startIndex: Int, endIndex: Int): MutableList<Span> {
+    /**
+     * Capture spans for the given region.
+     *
+     * @return the list of spans, or null if the tree lock is not available (to avoid blocking the rendering thread)
+     */
+    fun captureRegion(startIndex: Int, endIndex: Int): MutableList<Span>? {
         val list = mutableListOf<Span>()
         val captures = mutableListOf<TSQueryCapture>()
 
@@ -87,9 +216,11 @@ class LineSpansGenerator(
             cursor.isAllowChangedNodes = true
             cursor.setByteRange(startIndex * 2, endIndex * 2)
 
-            safeTree.accessTree { tree ->
+            // Use tryAccessTree to avoid blocking the rendering thread
+            // If the lock is not available (background thread is parsing), return null
+            val accessed = safeTree.tryAccessTree { tree ->
                 if (languageSpec.closed || tree.closed) {
-                    return@accessTree
+                    return@tryAccessTree
                 }
 
                 cursor.exec(languageSpec.tsQuery, tree.rootNode)
@@ -159,6 +290,11 @@ class LineSpansGenerator(
                     list.add(emptySpan(lastIndex))
                 }
             }
+
+            // If lock was not available, return null to indicate the caller should not cache
+            if (accessed == null) {
+                return null
+            }
         }
         if (list.isEmpty()) {
             list.add(emptySpan(0))
@@ -210,12 +346,42 @@ class LineSpansGenerator(
     override fun read() = object : Spans.Reader {
 
         private var spans = mutableListOf<Span>()
+        private var firstLineInSession = -1
+        private var lastLineInSession = -1
 
         override fun moveToLine(line: Int) {
-            if (line !in 0..<lineCount) {
+            if (line < 0) {
+                // Reset session tracking when line is -1 (release)
+                if (firstLineInSession >= 0 && lastLineInSession >= 0) {
+                    // Estimate visible lines from this rendering session
+                    val sessionLines = kotlin.math.abs(lastLineInSession - firstLineInSession) + 1
+                    if (sessionLines > 5) {
+                        estimatedVisibleLines = sessionLines
+                    }
+                }
+                firstLineInSession = -1
+                lastLineInSession = -1
                 spans = mutableListOf()
                 return
             }
+
+            if (line >= lineCount) {
+                spans = mutableListOf()
+                return
+            }
+
+            // Track session for visible lines estimation
+            if (firstLineInSession < 0) {
+                firstLineInSession = line
+            }
+            lastLineInSession = line
+
+            // Update scroll direction and cache range
+            updateScrollDirection(line)
+            val (rangeStart, rangeEnd) = calculateCacheRange(line)
+            cacheRangeStart = rangeStart
+            cacheRangeEnd = rangeEnd
+
             val cached = queryCache(line)
             if (cached != null) {
                 spans = cached
@@ -223,9 +389,16 @@ class LineSpansGenerator(
             }
             val start = content.indexer.getCharPosition(line, 0).index
             val end = start + content.getColumnCount(line)
-            spans = captureRegion(start, end)
-            applyRainbowBracketsIfEnabled(line, spans)
-            pushCache(line, spans)
+            val captured = captureRegion(start, end)
+            if (captured != null) {
+                // Only cache and apply rainbow brackets if we successfully captured
+                applyRainbowBracketsIfEnabled(line, captured)
+                pushCache(line, captured)
+                spans = captured
+            } else {
+                // Lock was not available, use empty span (don't cache)
+                spans = mutableListOf(emptySpan(0))
+            }
         }
 
         override fun getSpanCount() = spans.size
@@ -240,9 +413,15 @@ class LineSpansGenerator(
             val start = content.indexer.getCharPosition(line, 0).index
             val end = start + content.getColumnCount(line)
             val captured = captureRegion(start, end)
-            applyRainbowBracketsIfEnabled(line, captured)
-            pushCache(line, captured)
-            return captured.toMutableList()
+            if (captured != null) {
+                // Only cache and apply rainbow brackets if we successfully captured
+                applyRainbowBracketsIfEnabled(line, captured)
+                pushCache(line, captured)
+                return captured.toMutableList()
+            } else {
+                // Lock was not available, return empty span (don't cache)
+                return mutableListOf(emptySpan(0))
+            }
         }
 
     }
