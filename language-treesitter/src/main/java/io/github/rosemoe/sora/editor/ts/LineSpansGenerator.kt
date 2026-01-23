@@ -31,6 +31,7 @@ import io.github.rosemoe.sora.lang.styling.Span
 import io.github.rosemoe.sora.lang.styling.SpanFactory
 import io.github.rosemoe.sora.lang.styling.Spans
 import io.github.rosemoe.sora.lang.styling.TextStyle
+import io.github.rosemoe.sora.lang.styling.ViewportAwareSpans
 import io.github.rosemoe.sora.text.CharPosition
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
@@ -48,7 +49,7 @@ class LineSpansGenerator(
     private val content: Content, internal var theme: TsTheme,
     private val languageSpec: TsLanguageSpec, var scopedVariables: TsScopedVariables,
     private val spanFactory: TsSpanFactory
-) : Spans {
+) : ViewportAwareSpans {
 
     companion object {
         /**
@@ -72,55 +73,22 @@ class LineSpansGenerator(
 
     private val caches = mutableListOf<SpanCache>()
 
-    // Scroll direction tracking
-    private var lastAccessedLine = -1
-    private var scrollDirection = 0 // -1 = up, 0 = unknown, 1 = down
-    private var consecutiveDirectionCount = 0
-
     // Dynamic cache management based on visible area
     private var estimatedVisibleLines = DEFAULT_VISIBLE_LINES
     private var cacheRangeStart = 0
-    private var cacheRangeEnd = 0
+    private var cacheRangeEnd = lineCount - 1
+
+    private var scrollDirection = 0 // -1 = up, 0 = unknown, 1 = down
 
     private var rainbowDepthCacheVersion: Long = -1L
     private var rainbowDepthCacheLineCount: Int = -1
     private var rainbowDepthAtLineStart: IntArray = IntArray(0)
 
     /**
-     * Update scroll direction based on line access pattern.
-     * Returns the detected scroll direction: -1 (up), 0 (unknown), 1 (down)
-     */
-    private fun updateScrollDirection(line: Int): Int {
-        if (lastAccessedLine < 0) {
-            lastAccessedLine = line
-            return 0
-        }
-
-        val delta = line - lastAccessedLine
-        lastAccessedLine = line
-
-        // Ignore small jumps (could be random access)
-        if (kotlin.math.abs(delta) <= 2) {
-            return scrollDirection
-        }
-
-        val newDirection = if (delta > 0) 1 else -1
-
-        if (newDirection == scrollDirection) {
-            consecutiveDirectionCount++
-        } else {
-            scrollDirection = newDirection
-            consecutiveDirectionCount = 1
-        }
-
-        return scrollDirection
-    }
-
-    /**
-     * Calculate the optimal cache range based on current position and scroll direction.
+     * Calculate the optimal cache range based on visible line window and scroll direction.
      * Returns Pair(startLine, endLine) for the cache range.
      */
-    private fun calculateCacheRange(currentLine: Int): Pair<Int, Int> {
+    private fun calculateCacheRange(firstVisibleLine: Int, lastVisibleLine: Int): Pair<Int, Int> {
         val prefetchLines = (estimatedVisibleLines * PREFETCH_MULTIPLIER).toInt()
         val bufferLines = estimatedVisibleLines / 2
 
@@ -129,19 +97,19 @@ class LineSpansGenerator(
 
         when (scrollDirection) {
             1 -> {
-                // Scrolling down: prefetch more lines below
-                start = (currentLine - bufferLines).coerceAtLeast(0)
-                end = (currentLine + prefetchLines).coerceAtMost(lineCount - 1)
+                // Scrolling down: prefetch more lines below the viewport
+                start = (firstVisibleLine - bufferLines).coerceAtLeast(0)
+                end = (lastVisibleLine + prefetchLines).coerceAtMost(lineCount - 1)
             }
             -1 -> {
-                // Scrolling up: prefetch more lines above
-                start = (currentLine - prefetchLines).coerceAtLeast(0)
-                end = (currentLine + bufferLines).coerceAtMost(lineCount - 1)
+                // Scrolling up: prefetch more lines above the viewport
+                start = (firstVisibleLine - prefetchLines).coerceAtLeast(0)
+                end = (lastVisibleLine + bufferLines).coerceAtMost(lineCount - 1)
             }
             else -> {
-                // Unknown direction: balanced prefetch
-                start = (currentLine - bufferLines).coerceAtLeast(0)
-                end = (currentLine + bufferLines).coerceAtMost(lineCount - 1)
+                // Unknown direction: balanced buffer around viewport
+                start = (firstVisibleLine - bufferLines).coerceAtLeast(0)
+                end = (lastVisibleLine + bufferLines).coerceAtMost(lineCount - 1)
             }
         }
 
@@ -168,21 +136,47 @@ class LineSpansGenerator(
             (estimatedVisibleLines * (1 + PREFETCH_MULTIPLIER * 2)).toInt()
         )
 
-        // Remove entries outside the cache range, starting from the end (oldest)
-        val iterator = caches.iterator()
-        var removed = 0
-        while (iterator.hasNext() && caches.size - removed > maxCacheSize) {
-            val cache = iterator.next()
+        if (caches.size <= maxCacheSize) return
+
+        // Remove out-of-range entries from the oldest end first.
+        var idx = caches.lastIndex
+        while (caches.size > maxCacheSize && idx >= 0) {
+            val cache = caches[idx]
             if (!isInCacheRange(cache.line)) {
-                iterator.remove()
-                removed++
+                caches.removeAt(idx)
             }
+            idx--
         }
 
-        // If still over limit, remove from the end
+        // If still over limit, remove oldest entries
         while (caches.size > maxCacheSize) {
             caches.removeAt(caches.size - 1)
         }
+    }
+
+    override fun onViewportChanged(firstVisibleLine: Int, lastVisibleLine: Int, scrollDeltaY: Int) {
+        if (lineCount <= 0) {
+            cacheRangeStart = 0
+            cacheRangeEnd = -1
+            scrollDirection = 0
+            return
+        }
+
+        estimatedVisibleLines = (lastVisibleLine - firstVisibleLine + 1)
+            .coerceAtLeast(1)
+            .coerceAtMost(lineCount)
+
+        scrollDirection = when {
+            scrollDeltaY > 0 -> 1
+            scrollDeltaY < 0 -> -1
+            else -> 0
+        }
+
+        val (rangeStart, rangeEnd) = calculateCacheRange(firstVisibleLine, lastVisibleLine)
+        cacheRangeStart = rangeStart
+        cacheRangeEnd = rangeEnd
+
+        evictOutOfRangeCache()
     }
 
     fun queryCache(line: Int): MutableList<Span>? {
@@ -346,21 +340,9 @@ class LineSpansGenerator(
     override fun read() = object : Spans.Reader {
 
         private var spans = mutableListOf<Span>()
-        private var firstLineInSession = -1
-        private var lastLineInSession = -1
 
         override fun moveToLine(line: Int) {
             if (line < 0) {
-                // Reset session tracking when line is -1 (release)
-                if (firstLineInSession >= 0 && lastLineInSession >= 0) {
-                    // Estimate visible lines from this rendering session
-                    val sessionLines = kotlin.math.abs(lastLineInSession - firstLineInSession) + 1
-                    if (sessionLines > 5) {
-                        estimatedVisibleLines = sessionLines
-                    }
-                }
-                firstLineInSession = -1
-                lastLineInSession = -1
                 spans = mutableListOf()
                 return
             }
@@ -369,18 +351,6 @@ class LineSpansGenerator(
                 spans = mutableListOf()
                 return
             }
-
-            // Track session for visible lines estimation
-            if (firstLineInSession < 0) {
-                firstLineInSession = line
-            }
-            lastLineInSession = line
-
-            // Update scroll direction and cache range
-            updateScrollDirection(line)
-            val (rangeStart, rangeEnd) = calculateCacheRange(line)
-            cacheRangeStart = rangeStart
-            cacheRangeEnd = rangeEnd
 
             val cached = queryCache(line)
             if (cached != null) {

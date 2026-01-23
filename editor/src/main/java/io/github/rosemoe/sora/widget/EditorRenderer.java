@@ -71,6 +71,7 @@ import io.github.rosemoe.sora.lang.styling.Span;
 import io.github.rosemoe.sora.lang.styling.Spans;
 import io.github.rosemoe.sora.lang.styling.Styles;
 import io.github.rosemoe.sora.lang.styling.TextStyle;
+import io.github.rosemoe.sora.lang.styling.ViewportAwareSpans;
 import io.github.rosemoe.sora.lang.styling.color.ResolvableColor;
 import io.github.rosemoe.sora.lang.styling.inlayHint.InlayHint;
 import io.github.rosemoe.sora.lang.styling.line.LineAnchorStyle;
@@ -146,6 +147,7 @@ public class EditorRenderer {
     protected Content content;
     private volatile boolean renderingFlag;
     protected boolean forcedRecreateLayout;
+    private int lastOffsetYForViewport = Integer.MIN_VALUE;
 
     public EditorRenderer(@NonNull CodeEditor editor) {
         this.editor = editor;
@@ -458,7 +460,18 @@ public class EditorRenderer {
      * @param canvas Canvas you want to draw
      */
     public void drawView(Canvas canvas) {
-        cursor.updateCache(editor.getFirstVisibleLine());
+        final int firstVisibleLine = editor.getFirstVisibleLine();
+        final int lastVisibleLine = editor.getLastVisibleLine();
+        cursor.updateCache(firstVisibleLine);
+
+        final int offsetY = editor.getOffsetY();
+        final int scrollDeltaY = lastOffsetYForViewport == Integer.MIN_VALUE ? 0 : offsetY - lastOffsetYForViewport;
+        lastOffsetYForViewport = offsetY;
+
+        Styles stylesForViewport = editor.getStyles();
+        if (stylesForViewport != null && stylesForViewport.spans instanceof ViewportAwareSpans) {
+            ((ViewportAwareSpans) stylesForViewport.spans).onViewportChanged(firstVisibleLine, lastVisibleLine, scrollDeltaY);
+        }
 
         EditorColorScheme color = editor.getColorScheme();
         drawColor(canvas, color.getColor(EditorColorScheme.WHOLE_BACKGROUND), viewRect);
@@ -488,8 +501,8 @@ public class EditorRenderer {
         }
         forcedRecreateLayout = false;
 
-        prepareLines(editor.getFirstVisibleLine(), editor.getLastVisibleLine());
-        buildMeasureCacheForLines(editor.getFirstVisibleLine(), editor.getLastVisibleLine(), displayTimestamp, true);
+        prepareLines(firstVisibleLine, lastVisibleLine);
+        buildMeasureCacheForLines(firstVisibleLine, lastVisibleLine, displayTimestamp, true);
         var stuckLines = getStuckCodeBlocks();
 
         if (cursor.isSelected()) {
