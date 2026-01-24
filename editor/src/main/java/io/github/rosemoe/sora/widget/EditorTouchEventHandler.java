@@ -73,6 +73,7 @@ import kotlin.jvm.functions.Function7;
 public final class EditorTouchEventHandler implements GestureDetector.OnGestureListener, GestureDetector.OnDoubleTapListener, ScaleGestureDetector.OnScaleGestureListener {
 
     private static final String TAG = "SoraFoldingTouch";
+    private static final String TAG_TOUCH = "SoraTouchEvent";
 
     private final static int HIDE_DELAY = 3000;
     private final static int HIDE_DELAY_HANDLE = 3500;
@@ -433,8 +434,16 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
     public boolean onTouchEvent(MotionEvent e) {
         motionY = e.getY();
         motionX = e.getX();
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onTouchEvent: action=" + actionToString(e.getAction())
+                    + " x=" + e.getX() + " y=" + e.getY()
+                    + " pointerCount=" + e.getPointerCount());
+        }
         switch (e.getAction()) {
             case MotionEvent.ACTION_DOWN: {
+                if (editor.getProps().touchDebugLogEnabled) {
+                    Log.d(TAG_TOUCH, "ACTION_DOWN: thumbDownX=" + e.getX() + " thumbDownY=" + e.getY());
+                }
                 finishDragSelect();
                 thumbDownY = e.getY();
                 thumbDownX = e.getX();
@@ -511,6 +520,11 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
             }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                if (editor.getProps().touchDebugLogEnabled) {
+                    Log.d(TAG_TOUCH, "ACTION_UP/CANCEL: holdingScrollbarV=" + holdingScrollbarVertical
+                            + " holdingScrollbarH=" + holdingScrollbarHorizontal
+                            + " selHandleType=" + selHandleType);
+                }
                 if (holdingScrollbarVertical || holdingScrollbarHorizontal) {
                     holdingScrollbarVertical = holdingScrollbarHorizontal = false;
                     timeLastScroll = System.currentTimeMillis();
@@ -529,6 +543,21 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                 break;
         }
         return false;
+    }
+
+    /**
+     * Convert MotionEvent action to string for logging
+     */
+    private static String actionToString(int action) {
+        return switch (action) {
+            case MotionEvent.ACTION_DOWN -> "ACTION_DOWN";
+            case MotionEvent.ACTION_UP -> "ACTION_UP";
+            case MotionEvent.ACTION_MOVE -> "ACTION_MOVE";
+            case MotionEvent.ACTION_CANCEL -> "ACTION_CANCEL";
+            case MotionEvent.ACTION_POINTER_DOWN -> "ACTION_POINTER_DOWN";
+            case MotionEvent.ACTION_POINTER_UP -> "ACTION_POINTER_UP";
+            default -> "ACTION_" + action;
+        };
     }
 
     private boolean shouldForwardToTouch() {
@@ -833,6 +862,10 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
     }
 
     public void scrollBy(float distanceX, float distanceY, boolean smooth) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "scrollBy: distanceX=" + distanceX + " distanceY=" + distanceY
+                    + " smooth=" + smooth + " currX=" + scroller.getCurrX() + " currY=" + scroller.getCurrY());
+        }
         int endX = scroller.getCurrX() + (int) distanceX;
         int endY = scroller.getCurrY() + (int) distanceY;
         endX = Math.max(endX, 0);
@@ -862,6 +895,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onSingleTapUp(@NonNull MotionEvent e) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onSingleTapUp: x=" + e.getX() + " y=" + e.getY());
+        }
         scroller.forceFinished(true);
         if (editor.isFormatting()) {
             return true;
@@ -1013,6 +1049,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public void onLongPress(@NonNull MotionEvent e) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onLongPress: x=" + e.getX() + " y=" + e.getY());
+        }
         scroller.forceFinished(true);
         editor.releaseEdgeEffects();
         if (editor.isFormatting()) {
@@ -1039,6 +1078,10 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onScroll(MotionEvent e1, @NonNull MotionEvent e2, float distanceX, float distanceY) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onScroll: distanceX=" + distanceX + " distanceY=" + distanceY
+                    + " currX=" + scroller.getCurrX() + " currY=" + scroller.getCurrY());
+        }
         if (editor.getProps().singleDirectionDragging) {
             if (Math.abs(distanceX) > Math.abs(distanceY)) {
                 distanceY = 0;
@@ -1131,6 +1174,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onFling(MotionEvent e1, @NonNull MotionEvent e2, float velocityX, float velocityY) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onFling: velocityX=" + velocityX + " velocityY=" + velocityY);
+        }
         final float vx0 = velocityX;
         final float vy0 = velocityY;
         if (editor.getProps().singleDirectionFling) {
@@ -1177,6 +1223,10 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onScale(@NonNull ScaleGestureDetector detector) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onScale: scaleFactor=" + detector.getScaleFactor()
+                    + " focusX=" + detector.getFocusX() + " focusY=" + detector.getFocusY());
+        }
         if (editor.isFormatting()) {
             return true;
         }
@@ -1251,6 +1301,9 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
 
     @Override
     public boolean onDoubleTap(@NonNull MotionEvent e) {
+        if (editor.getProps().touchDebugLogEnabled) {
+            Log.d(TAG_TOUCH, "onDoubleTap: x=" + e.getX() + " y=" + e.getY());
+        }
         if (editor.isFormatting()) {
             return true;
         }

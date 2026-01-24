@@ -351,6 +351,13 @@ public class DirectAccessProps implements Serializable {
     public boolean foldingDebugLogEnabled = false;
 
     /**
+     * 是否输出触摸事件调试日志（仅用于定位问题，默认关闭）。
+     * <p>
+     * 启用后会输出 ACTION_DOWN、ACTION_MOVE、ACTION_UP、滑动、长按、双击等事件的详细日志。
+     */
+    public boolean touchDebugLogEnabled = false;
+
+    /**
      * 折叠图标大小（dp）。
      */
     @InvalidateRequired
