@@ -903,6 +903,7 @@ object SimpleMarkdownRenderer {
             }
             val bitmap = BitmapFactory.decodeByteArray(imageByteArray, 0, imageByteArray.size) ?: return null
             val scaledBitmap = scaleIfNeeded(bitmap, maxWidth)
+            @Suppress("DEPRECATION")
             return BitmapDrawable(scaledBitmap)
         }
 

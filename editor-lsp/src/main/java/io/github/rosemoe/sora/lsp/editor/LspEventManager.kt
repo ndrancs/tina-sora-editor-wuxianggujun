@@ -118,6 +118,7 @@ class LspEventManager(
     fun <T> getOption(optionClass: Class<T>): T? {
         for (option in options) {
             if (optionClass.isInstance(option)) {
+                @Suppress("UNCHECKED_CAST")
                 return option as? T?
             }
         }

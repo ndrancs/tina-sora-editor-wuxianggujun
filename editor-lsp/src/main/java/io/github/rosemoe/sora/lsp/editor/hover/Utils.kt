@@ -25,7 +25,6 @@
 package io.github.rosemoe.sora.lsp.editor.hover
 
 import org.eclipse.lsp4j.Hover
-import org.eclipse.lsp4j.MarkedString
 import org.eclipse.lsp4j.MarkupContent
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import kotlin.collections.any
@@ -34,13 +33,15 @@ import kotlin.collections.orEmpty
 fun Hover.hasContent(): Boolean {
     val hoverContents = contents ?: return false
     return if (hoverContents.isLeft) {
+        @Suppress("DEPRECATION")
         hoverContents.left.orEmpty().any { either -> !formatMarkedStringEither(either).isNullOrBlank() }
     } else {
         !formatMarkupContent(hoverContents.right).isNullOrBlank()
     }
 }
 
-fun formatMarkedStringEither(either: Either<String, MarkedString>?): String? {
+@Suppress("DEPRECATION")
+fun formatMarkedStringEither(either: Either<String, org.eclipse.lsp4j.MarkedString>?): String? {
     either ?: return null
     return if (either.isLeft) {
         either.left
@@ -49,7 +50,8 @@ fun formatMarkedStringEither(either: Either<String, MarkedString>?): String? {
     }
 }
 
-fun formatMarkedString(markedString: MarkedString?): String? {
+@Suppress("DEPRECATION")
+fun formatMarkedString(markedString: org.eclipse.lsp4j.MarkedString?): String? {
     val value = markedString?.value ?: return null
     val language = markedString.language
     return if (language.isNullOrEmpty()) value else  "```$language\n$value\n```"

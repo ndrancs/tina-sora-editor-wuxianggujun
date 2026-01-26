@@ -357,6 +357,7 @@ class LanguageServerWrapper(
 
     private fun getInitParams(): InitializeParams {
         val initParams = InitializeParams().apply {
+            @Suppress("DEPRECATION")
             rootUri = project.projectUri.toUri().toASCIIString()
         }
 
@@ -370,6 +371,7 @@ class LanguageServerWrapper(
             configuration = false
         }
         val workspaceFolder = WorkspaceFolder().apply {
+            @Suppress("DEPRECATION")
             uri = initParams.rootUri
             name = File(URI.create(uri)).name
         }
@@ -409,6 +411,7 @@ class LanguageServerWrapper(
                     textDocumentClientCapabilities,
                     null
                 )
+            @Suppress("DEPRECATION")
             initializationOptions =
                 serverDefinition.getInitializationOptions(URI.create(initParams.rootUri))
         }

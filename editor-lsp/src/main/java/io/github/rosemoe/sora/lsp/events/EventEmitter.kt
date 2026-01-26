@@ -47,6 +47,7 @@ class EventEmitter {
     }
 
     fun <T : EventListener> getEventListener(clazz: Class<T>): T? {
+        @Suppress("UNCHECKED_CAST")
         return listeners.flatMap { it.value }
             .find { it::class.java == clazz } as? T?
     }
@@ -178,14 +179,17 @@ class EventContext {
     private val data = HashMap<String, Any>()
 
     fun <T : Any> get(key: String): T {
+        @Suppress("UNCHECKED_CAST")
         return data[key] as T
     }
 
     fun <T : Any> getOrDefault(key: String, default: T): T {
+        @Suppress("UNCHECKED_CAST")
         return data.getOrDefault(key, default) as T
     }
 
     fun <T : Any> getOrNull(key: String): T? {
+        @Suppress("UNCHECKED_CAST")
         return data[key] as? T?
     }
 
@@ -199,6 +203,7 @@ class EventContext {
     }
 
     fun <T : Any> remove(key: String): T? {
+        @Suppress("UNCHECKED_CAST")
         return data.remove(key) as? T?
     }
 

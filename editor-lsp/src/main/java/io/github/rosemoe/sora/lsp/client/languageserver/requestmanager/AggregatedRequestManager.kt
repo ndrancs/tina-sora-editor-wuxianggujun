@@ -346,11 +346,15 @@ class AggregatedRequestManager(
         return firstFuture { hover(params) }
     }
 
+    @Deprecated("Use hover(HoverParams) instead", ReplaceWith("hover(HoverParams(params.textDocument, params.position))"))
     override fun hover(params: TextDocumentPositionParams): CompletableFuture<Hover>? {
+        @Suppress("DEPRECATION")
         return firstFuture { hover(params) }
     }
 
+    @Deprecated("Use signatureHelp(SignatureHelpParams) instead", ReplaceWith("signatureHelp(SignatureHelpParams(params.textDocument, params.position))"))
     override fun signatureHelp(params: TextDocumentPositionParams): CompletableFuture<SignatureHelp>? {
+        @Suppress("DEPRECATION")
         return firstFuture { signatureHelp(params) }
     }
 
@@ -363,8 +367,9 @@ class AggregatedRequestManager(
         return aggregateLists(futures)
     }
 
-    @Deprecated("")
+    @Deprecated("Use documentHighlight(DocumentHighlightParams) instead")
     override fun documentHighlight(params: TextDocumentPositionParams): CompletableFuture<List<DocumentHighlight>>? {
+        @Suppress("DEPRECATION")
         val futures = activeManagers.mapNotNull { it.documentHighlight(params) }
         return aggregateLists(futures)
     }
@@ -396,8 +401,9 @@ class AggregatedRequestManager(
         return aggregateDocumentDiagnostics(futures)
     }
 
-    @Deprecated("")
+    @Deprecated("Use definition(DefinitionParams) instead")
     override fun definition(params: TextDocumentPositionParams): CompletableFuture<Either<List<Location>, List<LocationLink>>>? {
+        @Suppress("DEPRECATION")
         val futures = activeManagers.mapNotNull { it.definition(params) }
         return aggregateDefinitions(futures)
     }

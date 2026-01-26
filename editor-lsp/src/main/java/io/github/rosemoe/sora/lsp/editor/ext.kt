@@ -103,7 +103,7 @@ fun List<ColorInformation>.colorInfoToDisplay() = map {
 }
 
 @OptIn(ExperimentalContracts::class)
-inline fun <T> List<T>?.normalizeList(): List<T>? {
+fun <T> List<T>?.normalizeList(): List<T>? {
     contract {
         returnsNotNull() implies (this@normalizeList != null)
     }
