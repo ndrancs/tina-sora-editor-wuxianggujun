@@ -40,8 +40,7 @@ import io.github.rosemoe.sora.lang.styling.Styles;
  * 管理代码折叠状态与行可见性。
  * <p>
  * 折叠区域基于 {@link Styles#blocksByStart}（即 {@link CodeBlock}）生成：每个 startLine 对应一个最外层 endLine。
- * 折叠后隐藏 (startLine, endLine) 的所有行（即隐藏 startLine 之后到 endLine 之前的内容行），
- * startLine 与 endLine 本身保持可见，以保证闭合符号（如 `}`）仍可被命中与编辑。
+ * 折叠后隐藏 (startLine, endLine] 的所有行，但 startLine 自身仍保持可见。
  */
 public final class FoldingManager {
 
@@ -112,8 +111,7 @@ public final class FoldingManager {
                     if (endLine > lastLine) {
                         endLine = lastLine;
                     }
-                    // A fold is meaningful only when it can hide at least 1 line between start and end
-                    if (endLine <= startLine + 1) {
+                    if (endLine <= startLine) {
                         continue;
                     }
                     final int oldEnd = foldableEndsByStartLine.get(startLine, -1);
@@ -131,7 +129,7 @@ public final class FoldingManager {
             final int newEndLine = foldableEndsByStartLine.get(startLine, -1);
 
             // Remove if the foldable region no longer exists or can not hide anything
-            if (newEndLine < 0 || newEndLine <= startLine + 1) {
+            if (newEndLine < 0 || newEndLine <= startLine) {
                 collapsedByStartLine.delete(startLine);
                 collapsedEndLineByStartLine.delete(startLine);
                 continue;
@@ -146,7 +144,7 @@ public final class FoldingManager {
     }
 
     public boolean isFoldableLine(int startLine) {
-        return foldableEndsByStartLine.indexOfKey(startLine) >= 0 && foldableEndsByStartLine.get(startLine) > startLine + 1;
+        return foldableEndsByStartLine.indexOfKey(startLine) >= 0 && foldableEndsByStartLine.get(startLine) > startLine;
     }
 
     /**
@@ -210,7 +208,7 @@ public final class FoldingManager {
         }
         // Only verify the fold region is still meaningful (exists and can hide at least 1 line)
         final int currentEndLine = foldableEndsByStartLine.get(startLine, -1);
-        return currentEndLine > startLine + 1;
+        return currentEndLine > startLine;
     }
 
     public boolean fold(int startLine) {
@@ -276,7 +274,7 @@ public final class FoldingManager {
         for (int i = 0; i < foldableEndsByStartLine.size(); i++) {
             final int startLine = foldableEndsByStartLine.keyAt(i);
             final int endLine = foldableEndsByStartLine.valueAt(i);
-            if (endLine > startLine + 1 && !collapsedByStartLine.get(startLine)) {
+            if (endLine > startLine && !collapsedByStartLine.get(startLine)) {
                 collapsedByStartLine.put(startLine, true);
                 collapsedEndLineByStartLine.put(startLine, endLine);  // Record original endLine
                 changed = true;
@@ -296,7 +294,7 @@ public final class FoldingManager {
             return null;
         }
         final int endLine = foldableEndsByStartLine.valueAt(idx);
-        if (endLine <= startLine + 1) {
+        if (endLine <= startLine) {
             return null;
         }
         return new FoldRegion(startLine, endLine, isCollapsed(startLine));
@@ -452,12 +450,11 @@ public final class FoldingManager {
         for (int i = 0; i < collapsedByStartLine.size(); i++) {
             final int startLine = collapsedByStartLine.keyAt(i);
             final int endLine = foldableEndsByStartLine.get(startLine, -1);
-            if (endLine <= startLine + 1) {
+            if (endLine <= startLine) {
                 continue;
             }
-            // Keep endLine visible; hide the interior lines only
             final int hideStart = startLine + 1;
-            final int hideEnd = endLine - 1;
+            final int hideEnd = endLine;
             if (hideStart > hideEnd) {
                 continue;
             }

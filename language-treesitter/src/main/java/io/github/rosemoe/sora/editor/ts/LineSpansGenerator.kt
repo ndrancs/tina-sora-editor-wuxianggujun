@@ -90,13 +90,18 @@ class LineSpansGenerator(
     private var rainbowDepthAtLineStart: IntArray = IntArray(0)
 
     private fun ensureSpanCacheValid() {
+        // lineCount may be temporarily stale during ContentListener callbacks (e.g. delete -> render -> analyze manager).
+        val actualLineCount = content.lineCount
+        if (lineCount != actualLineCount) {
+            lineCount = actualLineCount
+        }
         val version = content.documentVersion
-        if (version == cacheContentVersion && cacheLineCountSnapshot == lineCount) return
+        if (version == cacheContentVersion && cacheLineCountSnapshot == actualLineCount) return
         caches.clear()
         cacheContentVersion = version
-        cacheLineCountSnapshot = lineCount
+        cacheLineCountSnapshot = actualLineCount
         cacheRangeStart = 0
-        cacheRangeEnd = lineCount - 1
+        cacheRangeEnd = actualLineCount - 1
         scrollDirection = 0
     }
 
@@ -428,8 +433,9 @@ class LineSpansGenerator(
         val colorCount = languageSpec.rainbowBracketsColorCount
         if (colorCount <= 0) return
         val maxLines = languageSpec.rainbowBracketsMaxLines
-        if (maxLines > 0 && lineCount > maxLines) return
-        if (line !in 0..<lineCount) return
+        val actualLineCount = content.lineCount
+        if (maxLines > 0 && actualLineCount > maxLines) return
+        if (line !in 0 until actualLineCount) return
 
         val textLine = content.getLineString(line)
         if (textLine.isEmpty()) return
@@ -503,11 +509,12 @@ class LineSpansGenerator(
 
     private fun ensureRainbowDepthCache() {
         val version = content.documentVersion
-        if (version == rainbowDepthCacheVersion && rainbowDepthCacheLineCount == lineCount) return
+        val actualLineCount = content.lineCount
+        if (version == rainbowDepthCacheVersion && rainbowDepthCacheLineCount == actualLineCount) return
 
-        val depths = IntArray(lineCount)
+        val depths = IntArray(actualLineCount)
         var depth = 0
-        for (line in 0 until lineCount) {
+        for (line in 0 until actualLineCount) {
             depths[line] = depth
             val s = content.getLineString(line)
             for (ch in s) {
@@ -520,7 +527,7 @@ class LineSpansGenerator(
 
         rainbowDepthAtLineStart = depths
         rainbowDepthCacheVersion = version
-        rainbowDepthCacheLineCount = lineCount
+        rainbowDepthCacheLineCount = actualLineCount
     }
 
     private fun rainbowColorId(depth: Int): Int {

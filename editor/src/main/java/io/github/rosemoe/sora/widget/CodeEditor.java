@@ -2356,7 +2356,131 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
      * @see IntPair
      */
     public long getPointPosition(float xOffset, float yOffset) {
-        return layout.getCharPositionForLayoutOffset(xOffset - measureTextRegionOffset(), yOffset);
+        final long pos = layout.getCharPositionForLayoutOffset(xOffset - measureTextRegionOffset(), yOffset);
+        if (!props.foldingEnabled) {
+            return pos;
+        }
+        final int line = IntPair.getFirst(pos);
+        final var foldRegion = foldingManager.getFoldRegion(line);
+        if (foldRegion == null || !foldRegion.collapsed) {
+            return pos;
+        }
+        try {
+            final int safeColumn = Math.min(IntPair.getSecond(pos), text.getColumnCount(line));
+            final int index = text.getCharIndex(line, safeColumn);
+            final int rowIndex = layout.getRowIndexForPosition(index);
+            final var row = layout.getRowAt(rowIndex);
+            if (!row.isTrailingRow) {
+                return pos;
+            }
+
+            final float localX = xOffset - measureTextRegionOffset();
+            final float rowWidth = renderer.getRowWidth(rowIndex);
+            if (localX <= rowWidth) {
+                return pos;
+            }
+
+            final String placeholder = props.foldingPlaceholder;
+            if (placeholder == null || placeholder.isEmpty()) {
+                return pos;
+            }
+            final float paddingX = getDpUnit() * 3f;
+            final float placeholderStartX = rowWidth + paddingX;
+            if (localX < placeholderStartX) {
+                return pos;
+            }
+            final float placeholderWidth = getTextPaint().measureText(placeholder);
+            final float closingStartX = placeholderStartX + placeholderWidth + paddingX;
+
+            final int endLine = Math.max(0, Math.min(foldRegion.endLine, getLineCount() - 1));
+            if (localX >= closingStartX) {
+                final String closingSuffix = computeFoldingClosingSuffix(endLine);
+                if (closingSuffix == null || closingSuffix.isEmpty()) {
+                    return IntPair.pack(endLine, text.getColumnCount(endLine));
+                }
+                final float closingWidth = getTextPaint().measureText(closingSuffix);
+                if (localX <= closingStartX + closingWidth + paddingX) {
+                    return IntPair.pack(endLine, text.getColumnCount(endLine));
+                }
+            }
+
+            // Tap on "..." area: keep caret on the start line
+            return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
+        } catch (Throwable t) {
+            return pos;
+        }
+    }
+
+    @NonNull
+    private String computeFoldingClosingSuffix(int endLine) {
+        if (endLine < 0 || endLine >= getLineCount()) {
+            return "";
+        }
+        String endLineRaw;
+        try {
+            endLineRaw = text.getLineString(endLine);
+        } catch (Throwable t) {
+            return "";
+        }
+        if (endLineRaw == null || endLineRaw.isEmpty()) {
+            return "";
+        }
+
+        int suffixEnd = endLineRaw.length() - 1;
+        while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
+            suffixEnd--;
+        }
+
+        // Ignore common trailing comments: `} // end` / `} /* end */`
+        if (suffixEnd >= 1) {
+            // Block comment at end: `... */`
+            if (endLineRaw.charAt(suffixEnd) == '/' && endLineRaw.charAt(suffixEnd - 1) == '*') {
+                final int start = endLineRaw.lastIndexOf("/*", suffixEnd - 2);
+                if (start >= 0) {
+                    suffixEnd = start - 1;
+                    while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
+                        suffixEnd--;
+                    }
+                }
+            }
+            // Line comment: `... // comment`
+            final int lineComment = endLineRaw.lastIndexOf("//", suffixEnd);
+            if (lineComment >= 0) {
+                suffixEnd = lineComment - 1;
+                while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
+                    suffixEnd--;
+                }
+            }
+        }
+
+        if (suffixEnd < 0) {
+            return "";
+        }
+
+        int suffixStart = suffixEnd;
+        while (suffixStart >= 0) {
+            final char ch = endLineRaw.charAt(suffixStart);
+            if (ch == '}' || ch == ')' || ch == ']' || ch == ',' || ch == ';') {
+                suffixStart--;
+                continue;
+            }
+            if (Character.isWhitespace(ch)) {
+                break;
+            }
+            break;
+        }
+        suffixStart++;
+        if (suffixStart > suffixEnd) {
+            return "";
+        }
+        final String candidate = endLineRaw.substring(suffixStart, suffixEnd + 1);
+        for (int i = 0; i < candidate.length(); i++) {
+            final char ch = candidate.charAt(i);
+            if (ch == '}' || ch == ')' || ch == ']') {
+                return candidate;
+            }
+        }
+        return "";
     }
 
     /**
