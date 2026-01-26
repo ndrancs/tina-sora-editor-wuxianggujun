@@ -40,7 +40,8 @@ import io.github.rosemoe.sora.lang.styling.Styles;
  * 管理代码折叠状态与行可见性。
  * <p>
  * 折叠区域基于 {@link Styles#blocksByStart}（即 {@link CodeBlock}）生成：每个 startLine 对应一个最外层 endLine。
- * 折叠后隐藏 (startLine, endLine] 的所有行，但 startLine 自身仍保持可见。
+ * 折叠后隐藏 (startLine, endLine) 的所有行（即隐藏 startLine 之后到 endLine 之前的内容行），
+ * startLine 与 endLine 本身保持可见，以保证闭合符号（如 `}`）仍可被命中与编辑。
  */
 public final class FoldingManager {
 
@@ -56,6 +57,10 @@ public final class FoldingManager {
      * key=startLine, value=true
      */
     private final SparseBooleanArray collapsedByStartLine = new SparseBooleanArray();
+    /**
+     * key=startLine, value=endLine at the time of collapse (for detecting structural changes)
+     */
+    private final SparseIntArray collapsedEndLineByStartLine = new SparseIntArray();
 
     /**
      * 隐藏区间：key=startHiddenLine, value=endHiddenLine (inclusive)，按 key 升序且互不重叠
@@ -73,6 +78,7 @@ public final class FoldingManager {
     public void resetForNewText() {
         foldableEndsByStartLine.clear();
         collapsedByStartLine.clear();
+        collapsedEndLineByStartLine.clear();
         hiddenRanges.clear();
         mappingDirty = true;
         visibleLines = new int[0];
@@ -106,7 +112,8 @@ public final class FoldingManager {
                     if (endLine > lastLine) {
                         endLine = lastLine;
                     }
-                    if (endLine <= startLine) {
+                    // A fold is meaningful only when it can hide at least 1 line between start and end
+                    if (endLine <= startLine + 1) {
                         continue;
                     }
                     final int oldEnd = foldableEndsByStartLine.get(startLine, -1);
@@ -117,12 +124,20 @@ public final class FoldingManager {
             }
         }
 
-        // Remove collapsed states for non-existing foldable regions
+        // Remove collapsed states for non-existing foldable regions and sync recorded endLine to latest.
+        // NOTE: We intentionally keep collapsed states across minor edits (including whitespace/empty-line changes).
         for (int i = collapsedByStartLine.size() - 1; i >= 0; i--) {
             final int startLine = collapsedByStartLine.keyAt(i);
-            if (foldableEndsByStartLine.indexOfKey(startLine) < 0) {
+            final int newEndLine = foldableEndsByStartLine.get(startLine, -1);
+
+            // Remove if the foldable region no longer exists or can not hide anything
+            if (newEndLine < 0 || newEndLine <= startLine + 1) {
                 collapsedByStartLine.delete(startLine);
+                collapsedEndLineByStartLine.delete(startLine);
+                continue;
             }
+            // Keep collapsed and update the recorded endLine to avoid false invalidation
+            collapsedEndLineByStartLine.put(startLine, newEndLine);
         }
 
         rebuildHiddenRanges();
@@ -131,7 +146,7 @@ public final class FoldingManager {
     }
 
     public boolean isFoldableLine(int startLine) {
-        return foldableEndsByStartLine.indexOfKey(startLine) >= 0 && foldableEndsByStartLine.get(startLine) > startLine;
+        return foldableEndsByStartLine.indexOfKey(startLine) >= 0 && foldableEndsByStartLine.get(startLine) > startLine + 1;
     }
 
     /**
@@ -190,7 +205,12 @@ public final class FoldingManager {
     }
 
     public boolean isCollapsed(int startLine) {
-        return collapsedByStartLine.get(startLine);
+        if (!collapsedByStartLine.get(startLine)) {
+            return false;
+        }
+        // Only verify the fold region is still meaningful (exists and can hide at least 1 line)
+        final int currentEndLine = foldableEndsByStartLine.get(startLine, -1);
+        return currentEndLine > startLine + 1;
     }
 
     public boolean fold(int startLine) {
@@ -206,11 +226,13 @@ public final class FoldingManager {
             }
             return false;
         }
+        final int endLine = foldableEndsByStartLine.get(startLine);
         collapsedByStartLine.put(startLine, true);
+        collapsedEndLineByStartLine.put(startLine, endLine);  // Record original endLine
         rebuildHiddenRanges();
         mappingDirty = true;
         if (editor.getProps().foldingDebugLogEnabled) {
-            Log.d(TAG, "fold: startLine=" + startLine + " endLine=" + foldableEndsByStartLine.get(startLine) + " hiddenRanges=" + hiddenRanges.size());
+            Log.d(TAG, "fold: startLine=" + startLine + " endLine=" + endLine + " hiddenRanges=" + hiddenRanges.size());
         }
         return true;
     }
@@ -223,6 +245,7 @@ public final class FoldingManager {
             return false;
         }
         collapsedByStartLine.delete(startLine);
+        collapsedEndLineByStartLine.delete(startLine);  // Clear recorded endLine
         rebuildHiddenRanges();
         mappingDirty = true;
         if (editor.getProps().foldingDebugLogEnabled) {
@@ -240,6 +263,7 @@ public final class FoldingManager {
             return;
         }
         collapsedByStartLine.clear();
+        collapsedEndLineByStartLine.clear();
         hiddenRanges.clear();
         mappingDirty = true;
     }
@@ -252,8 +276,9 @@ public final class FoldingManager {
         for (int i = 0; i < foldableEndsByStartLine.size(); i++) {
             final int startLine = foldableEndsByStartLine.keyAt(i);
             final int endLine = foldableEndsByStartLine.valueAt(i);
-            if (endLine > startLine && !collapsedByStartLine.get(startLine)) {
+            if (endLine > startLine + 1 && !collapsedByStartLine.get(startLine)) {
                 collapsedByStartLine.put(startLine, true);
+                collapsedEndLineByStartLine.put(startLine, endLine);  // Record original endLine
                 changed = true;
             }
         }
@@ -271,7 +296,7 @@ public final class FoldingManager {
             return null;
         }
         final int endLine = foldableEndsByStartLine.valueAt(idx);
-        if (endLine <= startLine) {
+        if (endLine <= startLine + 1) {
             return null;
         }
         return new FoldRegion(startLine, endLine, isCollapsed(startLine));
@@ -336,10 +361,12 @@ public final class FoldingManager {
             mappingDirty = true;
             return;
         }
-        // Shift collapsed keys
+        // Shift collapsed keys and their recorded endLines
         final SparseBooleanArray newCollapsed = new SparseBooleanArray(collapsedByStartLine.size());
+        final SparseIntArray newCollapsedEndLines = new SparseIntArray(collapsedEndLineByStartLine.size());
         for (int i = 0; i < collapsedByStartLine.size(); i++) {
             final int key = collapsedByStartLine.keyAt(i);
+            final int originalEndLine = collapsedEndLineByStartLine.get(key, -1);
             if (deltaLines < 0) {
                 // deletion: remove states inside deleted range [anchorLine, deletedEndLine]
                 if (key >= anchorLine && key <= deletedEndLine) {
@@ -347,16 +374,29 @@ public final class FoldingManager {
                 }
             }
             int newKey = key;
+            int newEndLine = originalEndLine;
             if (key > anchorLine) {
                 newKey = key + deltaLines;
             }
+            if (originalEndLine > anchorLine) {
+                newEndLine = originalEndLine + deltaLines;
+            }
             if (newKey >= 0) {
                 newCollapsed.put(newKey, true);
+                if (newEndLine >= 0) {
+                    newCollapsedEndLines.put(newKey, newEndLine);
+                }
             }
         }
         collapsedByStartLine.clear();
+        collapsedEndLineByStartLine.clear();
         for (int i = 0; i < newCollapsed.size(); i++) {
-            collapsedByStartLine.put(newCollapsed.keyAt(i), true);
+            final int key = newCollapsed.keyAt(i);
+            collapsedByStartLine.put(key, true);
+            final int endLine = newCollapsedEndLines.get(key, -1);
+            if (endLine >= 0) {
+                collapsedEndLineByStartLine.put(key, endLine);
+            }
         }
 
         // foldable regions will be rebuilt from Styles soon; keep current but mark dirty
@@ -412,11 +452,12 @@ public final class FoldingManager {
         for (int i = 0; i < collapsedByStartLine.size(); i++) {
             final int startLine = collapsedByStartLine.keyAt(i);
             final int endLine = foldableEndsByStartLine.get(startLine, -1);
-            if (endLine <= startLine) {
+            if (endLine <= startLine + 1) {
                 continue;
             }
+            // Keep endLine visible; hide the interior lines only
             final int hideStart = startLine + 1;
-            final int hideEnd = endLine;
+            final int hideEnd = endLine - 1;
             if (hideStart > hideEnd) {
                 continue;
             }

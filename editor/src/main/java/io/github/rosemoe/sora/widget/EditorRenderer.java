@@ -1796,81 +1796,10 @@ public class EditorRenderer {
         var rowInfo = editor.getLayout().getRowAt(row);
         int line = rowInfo.lineIndex;
         
-        // Get the fold region to find the closing brace
+        // Get the fold region for this start line
         var foldRegion = editor.getFoldingManager().getFoldRegion(line);
         if (foldRegion == null) {
             return;
-        }
-        
-        // Get the end line content to find the closing token suffix (e.g. "}", "},", "});")
-        final int lineCount = content.getLineCount();
-        if (lineCount <= 0) {
-            return;
-        }
-        int endLine = foldRegion.endLine;
-        if (endLine < 0 || endLine >= lineCount) {
-            endLine = Math.max(0, Math.min(endLine, lineCount - 1));
-        }
-        var endLineContent = getLine(endLine);
-        final String endLineRaw = endLineContent.toString();
-
-        int suffixEnd = endLineRaw.length() - 1;
-        while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
-            suffixEnd--;
-        }
-        // Ignore common trailing comments so we can still show the actual closing tokens, e.g. `} // end`
-        if (suffixEnd >= 1) {
-            // Block comment at end: `... */`
-            if (suffixEnd >= 1 && endLineRaw.charAt(suffixEnd) == '/' && endLineRaw.charAt(suffixEnd - 1) == '*') {
-                final int start = endLineRaw.lastIndexOf("/*", suffixEnd - 2);
-                if (start >= 0) {
-                    suffixEnd = start - 1;
-                    while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
-                        suffixEnd--;
-                    }
-                }
-            }
-            // Line comment: `... // comment`
-            final int lineComment = endLineRaw.lastIndexOf("//", suffixEnd);
-            if (lineComment >= 0) {
-                suffixEnd = lineComment - 1;
-                while (suffixEnd >= 0 && Character.isWhitespace(endLineRaw.charAt(suffixEnd))) {
-                    suffixEnd--;
-                }
-            }
-        }
-
-        String closingSuffix = "";
-        int closingSuffixStartColumn = -1;
-        if (suffixEnd >= 0) {
-            int suffixStart = suffixEnd;
-            while (suffixStart >= 0) {
-                final char ch = endLineRaw.charAt(suffixStart);
-                if (ch == '}' || ch == ')' || ch == ']' || ch == ',' || ch == ';') {
-                    suffixStart--;
-                    continue;
-                }
-                if (Character.isWhitespace(ch)) {
-                    break;
-                }
-                break;
-            }
-            suffixStart++;
-            if (suffixStart <= suffixEnd) {
-                final String candidate = endLineRaw.substring(suffixStart, suffixEnd + 1);
-                boolean hasClosingBracket = false;
-                for (int i = 0; i < candidate.length(); i++) {
-                    final char ch = candidate.charAt(i);
-                    if (ch == '}' || ch == ')' || ch == ']') {
-                        hasClosingBracket = true;
-                        break;
-                    }
-                }
-                if (hasClosingBracket) {
-                    closingSuffix = candidate;
-                    closingSuffixStartColumn = suffixStart;
-                }
-            }
         }
         
         final float placeholderWidth = paintGeneral.measureText(placeholder);
@@ -1897,53 +1826,9 @@ public class EditorRenderer {
         paintGeneral.setColor(editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_COLOR));
         canvas.drawText(placeholder, x, baseline, paintGeneral);
         
-        // Draw the closing suffix with resolved colors (no background)
-        if (!closingSuffix.isEmpty() && closingSuffixStartColumn >= 0) {
-            float closingX = x + placeholderWidth + paddingX;
-            final int fallback = editor.getColorScheme().getColor(EditorColorScheme.TEXT_NORMAL);
-            for (int i = 0; i < closingSuffix.length(); i++) {
-                final int col = closingSuffixStartColumn + i;
-                final int color = resolveCharForegroundColor(endLine, col, fallback);
-                paintGeneral.setColor(color);
-                final String chStr = String.valueOf(closingSuffix.charAt(i));
-                canvas.drawText(chStr, closingX, baseline, paintGeneral);
-                closingX += paintGeneral.measureText(chStr);
-            }
-        }
-        
         canvas.restore();
 
         paintGeneral.setColor(oldColor);
-    }
-
-    private int resolveCharForegroundColor(int line, int column, int fallbackColor) {
-        Styles styles = editor.getStyles();
-        if (styles == null || styles.spans == null) {
-            return fallbackColor;
-        }
-        try {
-            Spans.Reader reader = styles.spans.read();
-            List<Span> spans = reader.getSpansOnLine(line);
-            if (spans == null || spans.isEmpty()) {
-                return fallbackColor;
-            }
-            Span current = spans.get(0);
-            for (int i = 1; i < spans.size(); i++) {
-                Span next = spans.get(i);
-                if (next.getColumn() > column) {
-                    break;
-                }
-                current = next;
-            }
-            int colorId = TextStyle.getForegroundColorId(current.getStyle());
-            if (colorId <= 0) {
-                return fallbackColor;
-            }
-            int resolved = editor.getColorScheme().getColor(colorId);
-            return resolved != 0 ? resolved : fallbackColor;
-        } catch (Throwable t) {
-            return fallbackColor;
-        }
     }
 
     /**
@@ -2309,11 +2194,29 @@ public class EditorRenderer {
             mm = 0;
         }
         int cursorIdx = editor.getCurrentCursorBlock();
+
+        // Get folding manager for line-to-row conversion when folding is enabled
+        final boolean foldingEnabled = editor.isFoldingEnabled();
+        final FoldingManager foldingManager = foldingEnabled ? editor.getFoldingManager() : null;
+
         for (int curr = mm; curr < blocks.size(); curr++) {
             CodeBlock block = blocks.get(curr);
             if (block == null) {
                 continue;
             }
+
+            // Skip blocks that are inside a collapsed region (their content is hidden)
+            if (foldingEnabled && foldingManager != null) {
+                // If the start line itself is hidden, skip this block entirely
+                if (foldingManager.isLineHidden(block.startLine)) {
+                    continue;
+                }
+                // If the end line is hidden (block is collapsed), skip drawing the block line
+                if (foldingManager.isLineHidden(block.endLine)) {
+                    continue;
+                }
+            }
+
             if (CodeEditor.hasVisibleRegion(block.startLine, block.endLine, first, last)) {
                 try {
                     var lineContent = getLine(block.endLine);
@@ -2322,8 +2225,17 @@ public class EditorRenderer {
                     float offsetStart = indentMode ? paintGeneral.getSpaceWidth() * block.startColumn : createTextRow(block.startLine).getCursorOffsetForIndex(Math.min(block.startColumn, lineContent.length()));
                     float offset = Math.min(offsetEnd, offsetStart);
                     float centerX = offset + offsetX;
-                    tmpRect.top = Math.max(0, editor.getRowBottom(block.startLine) - editor.getOffsetY());
-                    tmpRect.bottom = Math.min(editor.getHeight(), (block.toBottomOfEndLine ? editor.getRowBottom(block.endLine) : editor.getRowTop(block.endLine)) - editor.getOffsetY());
+
+                    // Convert line numbers to visible row numbers when folding is enabled
+                    int startRow = block.startLine;
+                    int endRow = block.endLine;
+                    if (foldingEnabled && foldingManager != null) {
+                        startRow = foldingManager.getVisibleRowForLine(block.startLine);
+                        endRow = foldingManager.getVisibleRowForLine(block.endLine);
+                    }
+
+                    tmpRect.top = Math.max(0, editor.getRowBottom(startRow) - editor.getOffsetY());
+                    tmpRect.bottom = Math.min(editor.getHeight(), (block.toBottomOfEndLine ? editor.getRowBottom(endRow) : editor.getRowTop(endRow)) - editor.getOffsetY());
                     tmpRect.left = centerX - editor.getDpUnit() * editor.getBlockLineWidth() / 2;
                     tmpRect.right = centerX + editor.getDpUnit() * editor.getBlockLineWidth() / 2;
                     drawColor(canvas, editor.getColorScheme().getColor(curr == cursorIdx ? EditorColorScheme.BLOCK_LINE_CURRENT : EditorColorScheme.BLOCK_LINE), tmpRect);
@@ -2350,6 +2262,15 @@ public class EditorRenderer {
         var current = editor.getCurrentCursorBlock();
         if (current >= 0 && current < blocks.size()) {
             var block = blocks.get(current);
+
+            // Skip if block is inside a collapsed region
+            if (editor.isFoldingEnabled()) {
+                final FoldingManager foldingManager = editor.getFoldingManager();
+                if (foldingManager.isLineHidden(block.startLine) || foldingManager.isLineHidden(block.endLine)) {
+                    return;
+                }
+            }
+
             var layout = editor.getLayout();
             try {
                 float top = layout.getCharLayoutOffset(block.startLine, block.startColumn)[0] - editor.getRowHeight() - editor.getOffsetY();

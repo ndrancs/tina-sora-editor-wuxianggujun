@@ -80,9 +80,25 @@ class LineSpansGenerator(
 
     private var scrollDirection = 0 // -1 = up, 0 = unknown, 1 = down
 
+    // Cache invalidation on content changes (including Undo/Redo).
+    // Cached spans are positional; if content changes, they must be regenerated.
+    private var cacheContentVersion: Long = -1L
+    private var cacheLineCountSnapshot: Int = -1
+
     private var rainbowDepthCacheVersion: Long = -1L
     private var rainbowDepthCacheLineCount: Int = -1
     private var rainbowDepthAtLineStart: IntArray = IntArray(0)
+
+    private fun ensureSpanCacheValid() {
+        val version = content.documentVersion
+        if (version == cacheContentVersion && cacheLineCountSnapshot == lineCount) return
+        caches.clear()
+        cacheContentVersion = version
+        cacheLineCountSnapshot = lineCount
+        cacheRangeStart = 0
+        cacheRangeEnd = lineCount - 1
+        scrollDirection = 0
+    }
 
     /**
      * Calculate the optimal cache range based on visible line window and scroll direction.
@@ -155,6 +171,7 @@ class LineSpansGenerator(
     }
 
     override fun onViewportChanged(firstVisibleLine: Int, lastVisibleLine: Int, scrollDeltaY: Int) {
+        ensureSpanCacheValid()
         if (lineCount <= 0) {
             cacheRangeStart = 0
             cacheRangeEnd = -1
@@ -180,6 +197,7 @@ class LineSpansGenerator(
     }
 
     fun queryCache(line: Int): MutableList<Span>? {
+        ensureSpanCacheValid()
         for (i in 0 until caches.size) {
             val cache = caches[i]
             if (cache.line == line) {
@@ -192,6 +210,7 @@ class LineSpansGenerator(
     }
 
     fun pushCache(line: Int, spans: MutableList<Span>) {
+        ensureSpanCacheValid()
         // Evict out-of-range entries first
         evictOutOfRangeCache()
         caches.add(0, SpanCache(spans, line))
