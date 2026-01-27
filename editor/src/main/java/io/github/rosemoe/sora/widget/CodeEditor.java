@@ -2416,8 +2416,8 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
                     clearFoldingVirtualCaret();
                     return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
                 }
-                final float closingWidth = getTextPaint().measureText(closing.suffix);
-                setFoldingVirtualCaretAfterSuffix(line, endLine, closing.endColumnExclusive, closingStartX + closingWidth);
+                final float caretWidth = getTextPaint().measureText(closing.suffix.substring(0, Math.min(closing.caretOffsetInSuffix, closing.suffix.length())));
+                setFoldingVirtualCaretAfterSuffix(line, endLine, closing.caretColumnExclusive, closingStartX + caretWidth);
                 return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
             }
 
@@ -2534,11 +2534,15 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         @NonNull
         final String suffix;
         final int startColumn;
+        final int caretOffsetInSuffix;
+        final int caretColumnExclusive;
         final int endColumnExclusive;
 
-        FoldingClosingSuffixInfo(@NonNull String suffix, int startColumn, int endColumnExclusive) {
+        FoldingClosingSuffixInfo(@NonNull String suffix, int startColumn, int caretOffsetInSuffix, int caretColumnExclusive, int endColumnExclusive) {
             this.suffix = suffix;
             this.startColumn = startColumn;
+            this.caretOffsetInSuffix = caretOffsetInSuffix;
+            this.caretColumnExclusive = caretColumnExclusive;
             this.endColumnExclusive = endColumnExclusive;
         }
     }
@@ -2546,16 +2550,16 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
     @NonNull
     private FoldingClosingSuffixInfo computeFoldingClosingSuffixInfo(int endLine) {
         if (endLine < 0 || endLine >= getLineCount()) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
         final String endLineRaw;
         try {
             endLineRaw = text.getLineString(endLine);
         } catch (Throwable t) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
         if (endLineRaw == null || endLineRaw.isEmpty()) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
 
         int suffixEnd = endLineRaw.length() - 1;
@@ -2586,7 +2590,7 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         }
 
         if (suffixEnd < 0) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
 
         int suffixStart = suffixEnd;
@@ -2603,22 +2607,32 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         }
         suffixStart++;
         if (suffixStart > suffixEnd) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
 
         final String candidate = endLineRaw.substring(suffixStart, suffixEnd + 1);
         boolean hasClosingBracket = false;
+        int caretOffsetInSuffix = -1;
         for (int i = 0; i < candidate.length(); i++) {
             final char ch = candidate.charAt(i);
             if (ch == '}' || ch == ')' || ch == ']') {
                 hasClosingBracket = true;
+                if (caretOffsetInSuffix < 0) {
+                    // Put caret right after the first closing bracket token (e.g. `}` in `};` / `});`),
+                    // so that backspace/delete targets the bracket naturally.
+                    caretOffsetInSuffix = i + 1;
+                }
                 break;
             }
         }
         if (!hasClosingBracket) {
-            return new FoldingClosingSuffixInfo("", -1, -1);
+            return new FoldingClosingSuffixInfo("", -1, -1, -1, -1);
         }
-        return new FoldingClosingSuffixInfo(candidate, suffixStart, suffixEnd + 1);
+        if (caretOffsetInSuffix < 0) {
+            caretOffsetInSuffix = 1;
+        }
+        final int caretColumnExclusive = suffixStart + caretOffsetInSuffix;
+        return new FoldingClosingSuffixInfo(candidate, suffixStart, caretOffsetInSuffix, caretColumnExclusive, suffixEnd + 1);
     }
 
     /**
