@@ -359,6 +359,13 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
     private Styles textStyles;
     @NonNull
     private final FoldingManager foldingManager = new FoldingManager(this);
+    private int foldPlaceholderSelectedStartLine = -1;
+    private int foldPlaceholderSelectedEndLine = -1;
+    private int foldingVirtualCaretStartLine = -1;
+    private int foldingVirtualCaretEndLine = -1;
+    private int foldingVirtualCaretEndColumn = -1;
+    private boolean foldingVirtualCaretAfterSuffix = false;
+    private float foldingVirtualCaretX = -1f;
     private DiagnosticsContainer diagnostics;
     private InlayHintsContainer inlayHints;
     private HighlightTextContainer highlightTextContainer;
@@ -2026,6 +2033,9 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
      * @param applySymbolCompletion Apply symbol surroundings and completions
      */
     public void commitText(@NonNull CharSequence text, boolean applyAutoIndent, boolean applySymbolCompletion) {
+        if (!cursor.isSelected()) {
+            materializeFoldingVirtualCaretForEdit();
+        }
         // replace text
         SymbolPairMatch.SymbolPair pair = null;
         if (applySymbolCompletion && getProps().symbolPairAutoCompletion && text.length() > 0) {
@@ -2363,6 +2373,7 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         final int line = IntPair.getFirst(pos);
         final var foldRegion = foldingManager.getFoldRegion(line);
         if (foldRegion == null || !foldRegion.collapsed) {
+            clearFoldingVirtualCaret();
             return pos;
         }
         try {
@@ -2371,22 +2382,26 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
             final int rowIndex = layout.getRowIndexForPosition(index);
             final var row = layout.getRowAt(rowIndex);
             if (!row.isTrailingRow) {
+                clearFoldingVirtualCaret();
                 return pos;
             }
 
             final float localX = xOffset - measureTextRegionOffset();
             final float rowWidth = renderer.getRowWidth(rowIndex);
             if (localX <= rowWidth) {
+                clearFoldingVirtualCaret();
                 return pos;
             }
 
             final String placeholder = props.foldingPlaceholder;
             if (placeholder == null || placeholder.isEmpty()) {
+                clearFoldingVirtualCaret();
                 return pos;
             }
             final float paddingX = getDpUnit() * 3f;
             final float placeholderStartX = rowWidth + paddingX;
             if (localX < placeholderStartX) {
+                clearFoldingVirtualCaret();
                 return pos;
             }
             final float placeholderWidth = getTextPaint().measureText(placeholder);
@@ -2394,36 +2409,146 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
 
             final int endLine = Math.max(0, Math.min(foldRegion.endLine, getLineCount() - 1));
             if (localX >= closingStartX) {
-                final String closingSuffix = computeFoldingClosingSuffix(endLine);
-                if (closingSuffix == null || closingSuffix.isEmpty()) {
-                    return IntPair.pack(endLine, text.getColumnCount(endLine));
+                // Treat the whole right side as a "virtual caret after closing suffix" area.
+                // This keeps cursor placement stable when users tap/drag slightly after the rendered `}` / `);` etc.
+                final FoldingClosingSuffixInfo closing = computeFoldingClosingSuffixInfo(endLine);
+                if (closing.suffix.isEmpty()) {
+                    clearFoldingVirtualCaret();
+                    return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
                 }
-                final float closingWidth = getTextPaint().measureText(closingSuffix);
-                if (localX <= closingStartX + closingWidth + paddingX) {
-                    return IntPair.pack(endLine, text.getColumnCount(endLine));
-                }
+                final float closingWidth = getTextPaint().measureText(closing.suffix);
+                setFoldingVirtualCaretAfterSuffix(line, endLine, closing.endColumnExclusive, closingStartX + closingWidth);
+                return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
             }
 
             // Tap on "..." area: keep caret on the start line
+            clearFoldingVirtualCaret();
             return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
         } catch (Throwable t) {
+            clearFoldingVirtualCaret();
             return pos;
         }
     }
 
+    boolean hasFoldingVirtualCaretAfterSuffix(int startLine) {
+        return foldingVirtualCaretAfterSuffix
+                && foldingVirtualCaretStartLine == startLine
+                && foldingVirtualCaretStartLine >= 0
+                && foldingManager.isCollapsed(startLine);
+    }
+
+    int getFoldingVirtualCaretEndLine(int startLine) {
+        if (!hasFoldingVirtualCaretAfterSuffix(startLine)) {
+            return -1;
+        }
+        return foldingVirtualCaretEndLine;
+    }
+
+    void clearFoldingVirtualCaret() {
+        foldingVirtualCaretStartLine = -1;
+        foldingVirtualCaretEndLine = -1;
+        foldingVirtualCaretEndColumn = -1;
+        foldingVirtualCaretAfterSuffix = false;
+        foldingVirtualCaretX = -1f;
+    }
+
+    boolean materializeFoldingVirtualCaretForEdit() {
+        if (!foldingVirtualCaretAfterSuffix || foldingVirtualCaretStartLine < 0) {
+            return false;
+        }
+        final int startLine = foldingVirtualCaretStartLine;
+        final int endLine = foldingVirtualCaretEndLine;
+        final int endColumn = foldingVirtualCaretEndColumn;
+        clearFoldingVirtualCaret();
+        if (endLine < 0 || endLine >= getLineCount()) {
+            return false;
+        }
+        boolean foldingChanged = ensureLineVisibleForFolding(endLine);
+        if (foldingChanged) {
+            onFoldingChanged();
+        }
+        final int safeEndColumn = Math.max(0, Math.min(endColumn >= 0 ? endColumn : text.getColumnCount(endLine), text.getColumnCount(endLine)));
+        setSelection(endLine, safeEndColumn, true, SelectionChangeEvent.CAUSE_KEYBOARD_OR_CODE);
+        return true;
+    }
+
+    void setFoldingVirtualCaretAfterSuffix(int startLine, int endLine, int endColumnExclusive, float xInTextRegion) {
+        foldingVirtualCaretStartLine = startLine;
+        foldingVirtualCaretEndLine = endLine;
+        foldingVirtualCaretEndColumn = endColumnExclusive;
+        foldingVirtualCaretAfterSuffix = true;
+        foldingVirtualCaretX = xInTextRegion;
+    }
+
+    float getFoldingVirtualCaretX(int startLine) {
+        if (!hasFoldingVirtualCaretAfterSuffix(startLine)) {
+            return -1f;
+        }
+        return foldingVirtualCaretX;
+    }
+
+    boolean isFoldPlaceholderSelected(int startLine) {
+        return foldPlaceholderSelectedStartLine == startLine
+                && foldPlaceholderSelectedEndLine > startLine
+                && foldingManager.isCollapsed(startLine);
+    }
+
+    void toggleFoldPlaceholderSelection(int startLine) {
+        final var region = foldingManager.getFoldRegion(startLine);
+        final int endLine = region == null ? -1 : region.endLine;
+        if (isFoldPlaceholderSelected(startLine)) {
+            clearFoldPlaceholderSelection();
+            return;
+        }
+        if (region == null || !region.collapsed || endLine <= startLine) {
+            return;
+        }
+        foldPlaceholderSelectedStartLine = startLine;
+        foldPlaceholderSelectedEndLine = endLine;
+        clearFoldingVirtualCaret();
+        invalidate();
+    }
+
+    void clearFoldPlaceholderSelection() {
+        if (foldPlaceholderSelectedStartLine == -1 && foldPlaceholderSelectedEndLine == -1) {
+            return;
+        }
+        foldPlaceholderSelectedStartLine = -1;
+        foldPlaceholderSelectedEndLine = -1;
+        invalidate();
+    }
+
     @NonNull
     private String computeFoldingClosingSuffix(int endLine) {
-        if (endLine < 0 || endLine >= getLineCount()) {
-            return "";
+        return computeFoldingClosingSuffixInfo(endLine).suffix;
+    }
+
+    private static final class FoldingClosingSuffixInfo {
+        @NonNull
+        final String suffix;
+        final int startColumn;
+        final int endColumnExclusive;
+
+        FoldingClosingSuffixInfo(@NonNull String suffix, int startColumn, int endColumnExclusive) {
+            this.suffix = suffix;
+            this.startColumn = startColumn;
+            this.endColumnExclusive = endColumnExclusive;
         }
-        String endLineRaw;
+    }
+
+    @NonNull
+    private FoldingClosingSuffixInfo computeFoldingClosingSuffixInfo(int endLine) {
+        if (endLine < 0 || endLine >= getLineCount()) {
+            return new FoldingClosingSuffixInfo("", -1, -1);
+        }
+        final String endLineRaw;
         try {
             endLineRaw = text.getLineString(endLine);
         } catch (Throwable t) {
-            return "";
+            return new FoldingClosingSuffixInfo("", -1, -1);
         }
         if (endLineRaw == null || endLineRaw.isEmpty()) {
-            return "";
+            return new FoldingClosingSuffixInfo("", -1, -1);
         }
 
         int suffixEnd = endLineRaw.length() - 1;
@@ -2454,7 +2579,7 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         }
 
         if (suffixEnd < 0) {
-            return "";
+            return new FoldingClosingSuffixInfo("", -1, -1);
         }
 
         int suffixStart = suffixEnd;
@@ -2471,16 +2596,22 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         }
         suffixStart++;
         if (suffixStart > suffixEnd) {
-            return "";
+            return new FoldingClosingSuffixInfo("", -1, -1);
         }
+
         final String candidate = endLineRaw.substring(suffixStart, suffixEnd + 1);
+        boolean hasClosingBracket = false;
         for (int i = 0; i < candidate.length(); i++) {
             final char ch = candidate.charAt(i);
             if (ch == '}' || ch == ')' || ch == ']') {
-                return candidate;
+                hasClosingBracket = true;
+                break;
             }
         }
-        return "";
+        if (!hasClosingBracket) {
+            return new FoldingClosingSuffixInfo("", -1, -1);
+        }
+        return new FoldingClosingSuffixInfo(candidate, suffixStart, suffixEnd + 1);
     }
 
     /**
@@ -3633,6 +3764,10 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
      * @param makeItVisible Make the character visible
      */
     public void setSelection(int line, int column, boolean makeItVisible, int cause) {
+        clearFoldPlaceholderSelection();
+        if (!(foldingVirtualCaretAfterSuffix && foldingVirtualCaretStartLine == line)) {
+            clearFoldingVirtualCaret();
+        }
         boolean foldingChanged = ensureLineVisibleForFolding(line);
         if (foldingChanged) {
             onFoldingChanged();
@@ -3725,6 +3860,8 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
      */
     public void setSelectionRegion(int lineLeft, int columnLeft, int lineRight,
                                    int columnRight, boolean makeRightVisible, int cause) {
+        clearFoldPlaceholderSelection();
+        clearFoldingVirtualCaret();
         boolean foldingChanged = ensureLineVisibleForFolding(lineLeft) | ensureLineVisibleForFolding(lineRight);
         if (foldingChanged) {
             onFoldingChanged();
@@ -3840,6 +3977,22 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
     public void copyText(boolean shouldCopyLine) {
         if (cursor.isSelected()) {
             copyTextToClipboard(getText(), cursor.getLeft(), cursor.getRight());
+        } else if (foldPlaceholderSelectedStartLine >= 0 && foldPlaceholderSelectedEndLine > foldPlaceholderSelectedStartLine && foldingManager.isCollapsed(foldPlaceholderSelectedStartLine)) {
+            final int startLine = foldPlaceholderSelectedStartLine;
+            final int endLine = Math.min(foldPlaceholderSelectedEndLine, getLineCount() - 1);
+            try {
+                final int start = getText().getCharIndex(startLine, 0);
+                final int end = getText().getCharIndex(endLine, getText().getColumnCount(endLine));
+                copyTextToClipboard(getText(), start, end);
+            } catch (Throwable t) {
+                // fallback to default behavior
+                if (shouldCopyLine) {
+                    copyLine();
+                } else {
+                    var text = getLineSeparator().getContent();
+                    copyTextToClipboard(text, 0, text.length());
+                }
+            }
         } else if (shouldCopyLine) {
             copyLine();
         } else {
@@ -3895,6 +4048,17 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
             copyText();
             deleteText();
             notifyIMEExternalCursorChange();
+        } else if (foldPlaceholderSelectedStartLine >= 0 && foldPlaceholderSelectedEndLine > foldPlaceholderSelectedStartLine && foldingManager.isCollapsed(foldPlaceholderSelectedStartLine)) {
+            copyText(true);
+            try {
+                final int startLine = foldPlaceholderSelectedStartLine;
+                final int endLine = Math.min(foldPlaceholderSelectedEndLine, getLineCount() - 1);
+                clearFoldPlaceholderSelection();
+                text.delete(startLine, 0, endLine, getText().getColumnCount(endLine));
+                notifyIMEExternalCursorChange();
+            } catch (Throwable t) {
+                cutLine();
+            }
         } else {
             cutLine();
         }

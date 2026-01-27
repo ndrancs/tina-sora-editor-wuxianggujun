@@ -437,7 +437,11 @@ class LineSpansGenerator(
         if (maxLines > 0 && actualLineCount > maxLines) return
         if (line !in 0 until actualLineCount) return
 
-        val textLine = content.getLineString(line)
+        val textLine = try {
+            content.getLineString(line)
+        } catch (_: Throwable) {
+            return
+        }
         if (textLine.isEmpty()) return
         if (spans.isEmpty()) return
 
@@ -508,15 +512,24 @@ class LineSpansGenerator(
     }
 
     private fun ensureRainbowDepthCache() {
-        val version = content.documentVersion
-        val actualLineCount = content.lineCount
-        if (version == rainbowDepthCacheVersion && rainbowDepthCacheLineCount == actualLineCount) return
+        val startVersion = content.documentVersion
+        val startLineCount = content.lineCount
+        if (startVersion == rainbowDepthCacheVersion && rainbowDepthCacheLineCount == startLineCount) return
 
-        val depths = IntArray(actualLineCount)
+        val depths = IntArray(startLineCount)
         var depth = 0
-        for (line in 0 until actualLineCount) {
+        for (line in 0 until startLineCount) {
+            // Content can be mutated during IME/delete callbacks. Avoid crashing on transient states by
+            // bailing out and trying again on the next render when the document is stable.
+            if (content.documentVersion != startVersion || content.lineCount != startLineCount) {
+                return
+            }
             depths[line] = depth
-            val s = content.getLineString(line)
+            val s = try {
+                content.getLineString(line)
+            } catch (_: Throwable) {
+                return
+            }
             for (ch in s) {
                 when (ch) {
                     '(', '[', '{' -> depth++
@@ -525,9 +538,12 @@ class LineSpansGenerator(
             }
         }
 
+        if (content.documentVersion != startVersion || content.lineCount != startLineCount) {
+            return
+        }
         rainbowDepthAtLineStart = depths
-        rainbowDepthCacheVersion = version
-        rainbowDepthCacheLineCount = actualLineCount
+        rainbowDepthCacheVersion = startVersion
+        rainbowDepthCacheLineCount = startLineCount
     }
 
     private fun rainbowColorId(depth: Int): Int {

@@ -1666,7 +1666,13 @@ public class EditorRenderer {
                     applyBidiIndicatorAttrs(task, cursor.getRightLine(), cursor.getRightColumn());
                 }
             } else if (cursor.getLeftLine() == line && isInside(cursor.getLeftColumn(), rowInf.startColumn, rowInf.endColumn, rowInf.isTrailingRow)) {
-                float centerX = editor.measureTextRegionOffset() + layout.getCharLayoutOffset(cursor.getLeftLine(), cursor.getLeftColumn())[1] - editor.getOffsetX();
+                float centerX;
+                if (rowInf.isTrailingRow && editor.hasFoldingVirtualCaretAfterSuffix(line)) {
+                    final float vx = editor.getFoldingVirtualCaretX(line);
+                    centerX = editor.measureTextRegionOffset() + vx - editor.getOffsetX();
+                } else {
+                    centerX = editor.measureTextRegionOffset() + layout.getCharLayoutOffset(cursor.getLeftLine(), cursor.getLeftColumn())[1] - editor.getOffsetX();
+                }
                 var task = new DrawCursorTask(centerX, getRowBottomForBackground(row) - editor.getOffsetY(), SelectionHandleStyle.HANDLE_TYPE_INSERT, editor.getInsertHandleDescriptor());
                 postDrawCursor.add(task);
                 applyBidiIndicatorAttrs(task, cursor.getLeftLine(), cursor.getLeftColumn());
@@ -1891,10 +1897,16 @@ public class EditorRenderer {
         tmpRect.right = x + placeholderWidth + paddingX;
         tmpRect.top = editor.getRowTopOfText(0) - paddingY;
         tmpRect.bottom = editor.getRowBottomOfText(0) + paddingY;
-        drawColorRound(canvas, editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_BACKGROUND), tmpRect);
+        final int foldedBg = editor.isFoldPlaceholderSelected(line)
+                ? editor.getColorScheme().getColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND)
+                : editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_BACKGROUND);
+        drawColorRound(canvas, foldedBg, tmpRect);
         
         // Draw the placeholder text "..."
-        paintGeneral.setColor(editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_COLOR));
+        final int foldedTextColor = editor.isFoldPlaceholderSelected(line)
+                ? editor.getColorScheme().getColor(EditorColorScheme.TEXT_SELECTED)
+                : editor.getColorScheme().getColor(EditorColorScheme.FOLDED_TEXT_COLOR);
+        paintGeneral.setColor(foldedTextColor);
         canvas.drawText(placeholder, x, baseline, paintGeneral);
 
         // Draw the closing suffix with resolved colors (no background)

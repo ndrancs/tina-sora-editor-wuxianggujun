@@ -207,6 +207,71 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
             if (languageSpec.blocksQuery.patternCount == 0 || !languageSpec.blocksQuery.canAccess()) {
                 return
             }
+
+            fun expectedClosingBracketForNode(node: com.itsaky.androidide.treesitter.TSNode): Char? {
+                return try {
+                    val startChar = node.startByte / 2
+                    val endChar = (node.endByte / 2).coerceAtMost(localText.length)
+                    if (startChar < 0 || startChar >= endChar) return null
+
+                    val prefixEnd = (startChar + 256).coerceAtMost(endChar)
+                    val prefix = localText.subSequence(startChar, prefixEnd)
+                    var i = 0
+                    while (i < prefix.length && prefix[i].isWhitespace()) i++
+                    if (i >= prefix.length) return null
+
+                    when (prefix[i]) {
+                        '{' -> '}'
+                        '(' -> ')'
+                        '[' -> ']'
+                        else -> null
+                    }
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+
+            fun hasExpectedClosingBracketAtEnd(node: com.itsaky.androidide.treesitter.TSNode, expected: Char): Boolean {
+                return try {
+                    val endChar = (node.endByte / 2).coerceAtMost(localText.length)
+                    val startChar = (endChar - 4096).coerceAtLeast(node.startByte / 2)
+                    if (endChar <= startChar) return false
+                    val tail = localText.subSequence(startChar, endChar).toString()
+                    if (tail.isEmpty()) return false
+
+                    var i = tail.length - 1
+                    fun skipWs() {
+                        while (i >= 0 && tail[i].isWhitespace()) i--
+                    }
+
+                    while (true) {
+                        skipWs()
+                        if (i < 0) return false
+
+                        // Block comment at end: `... */`
+                        if (i >= 1 && tail[i] == '/' && tail[i - 1] == '*') {
+                            val start = tail.lastIndexOf("/*", i - 2)
+                            if (start < 0) return false
+                            i = start - 1
+                            continue
+                        }
+
+                        // Line comment at end: `... // comment`
+                        val lineStart = (tail.lastIndexOf('\n', i)).let { if (it < 0) 0 else it + 1 }
+                        val line = tail.substring(lineStart, i + 1)
+                        val commentIdx = line.lastIndexOf("//")
+                        if (commentIdx >= 0) {
+                            i = lineStart + commentIdx - 1
+                            continue
+                        }
+                        break
+                    }
+
+                    i >= 0 && tail[i] == expected
+                } catch (_: Throwable) {
+                    false
+                }
+            }
             val blocks = mutableListOf<CodeBlock>()
             TSQueryCursor.create().use {
                 it.exec(languageSpec.blocksQuery, tree!!.rootNode)
@@ -218,11 +283,12 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                             match
                         )
                     ) {
-                        match.captures.forEach {
+                        match.captures.forEach { capture ->
+                            val capturedNode = capture.node
+                            val captureName = languageSpec.blocksQuery.getCaptureNameForId(capture.index)
+                            val markedEndAtLastTerminal = captureName.endsWith(".marked")
                             val block = CodeBlock().also { block ->
-                                var node = it.node
-                                val captureName = languageSpec.blocksQuery.getCaptureNameForId(it.index)
-                                val markedEndAtLastTerminal = captureName.endsWith(".marked")
+                                var node = capturedNode
                                 val start = node.startPoint
                                 block.startLine = start.row
                                 block.startColumn = start.column / 2
@@ -248,6 +314,13 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                             }
                             // A block is foldable when it spans more than one line (i.e. it can hide at least 1 line)
                             if (block.endLine > block.startLine) {
+                                // If a bracketed structure loses its closing token (e.g. user deleted `}`), the parser
+                                // may still yield a multi-line node that extends to EOF. Dropping such blocks prevents
+                                // folding from getting "stuck" with a dangling placeholder.
+                                val expectedClose = expectedClosingBracketForNode(capturedNode)
+                                if (expectedClose != null && !hasExpectedClosingBracketAtEnd(capturedNode, expectedClose)) {
+                                    return@forEach
+                                }
                                 blocks.add(block)
                             }
                         }

@@ -224,6 +224,7 @@ public class EditorKeyEventHandler {
                     if (editor.isTextSelected()) {
                         editor.deleteText();
                     } else {
+                        editor.materializeFoldingVirtualCaretForEdit();
                         if (isCtrlPressed) {
                             editor.extendSelection(SelectionMovement.PREVIOUS_WORD_BOUNDARY);
                             if (editor.isTextSelected()) {
@@ -241,6 +242,7 @@ public class EditorKeyEventHandler {
                     if (editor.isTextSelected()) {
                         editor.deleteText();
                     } else {
+                        editor.materializeFoldingVirtualCaretForEdit();
                         if (isCtrlPressed) {
                             editor.extendSelection(SelectionMovement.NEXT_WORD_BOUNDARY);
                             if (editor.isTextSelected()) {

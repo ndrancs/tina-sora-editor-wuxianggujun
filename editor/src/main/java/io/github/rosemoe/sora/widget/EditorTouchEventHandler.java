@@ -993,19 +993,28 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                         final float paddingX = editor.getDpUnit() * 3f;
                         final float placeholderWidth = editor.getRenderer().getPaint().measureText(placeholder);
 
-                        // xOffset coordinate
-                        float textRegionOffset = editor.measureTextRegionOffset();
-                        int endColumn = editor.getText().getColumnCount(lineIndex);
-                        float lineEndX = textRegionOffset + editor.getLayout().getCharLayoutOffset(lineIndex, endColumn)[1];
-                        float clickX = e.getX() + editor.getOffsetX();
+                        // Keep hit-test consistent with how folding placeholder is rendered (row width).
+                        final float textRegionOffset = editor.measureTextRegionOffset();
+                        final float clickX = e.getX() + editor.getOffsetX();
+                        final float localX = clickX - textRegionOffset;
+                        final float rowWidth = editor.getRenderer().getRowWidth(row);
 
-                        // Only unfold when clicking on the folding placeholder background ("...")
-                        if (clickX >= lineEndX && clickX <= lineEndX + placeholderWidth + paddingX * 2f) {
-                        // Unfold the region
-                        editor.unfold(lineIndex);
+                        // Only unfold when clicking on the folding placeholder ("...") area.
+                        // Important: keep the right boundary STRICTLY before the closing suffix start
+                        // to avoid swallowing clicks intended for the rendered `}` / `);` etc.
+                        //
+                        // Rendering:
+                        // - placeholder background ends at rowWidth + placeholderWidth + 2*paddingX
+                        // - closing suffix starts at rowWidth + placeholderWidth + 2*paddingX
+                        //
+                        // We intentionally shrink the hit box by one paddingX on the right to tolerate
+                        // glyph negative bearings without stealing closing-suffix taps.
+                        final float placeholderRight = rowWidth + placeholderWidth + paddingX;
+                        if (localX >= rowWidth && localX < placeholderRight) {
+                        editor.toggleFoldPlaceholderSelection(lineIndex);
                         notifyLater();
                         if (editor.getProps().foldingDebugLogEnabled) {
-                            Log.d(TAG, "tap: unfold via placeholder line=" + lineIndex);
+                            Log.d(TAG, "tap: toggle placeholder selection line=" + lineIndex);
                         }
                         return true;
                         }
@@ -1367,9 +1376,12 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
             var anotherDesc = type == LEFT ? editor.getRightHandleDescriptor() : editor.getLeftHandleDescriptor();
             float targetX = scroller.getCurrX() + e.getX() + (descriptor.alignment != SelectionHandleStyle.ALIGN_CENTER ? descriptor.position.width() : 0) * (descriptor.alignment == SelectionHandleStyle.ALIGN_LEFT ? 1 : -1);
             float targetY = scroller.getCurrY() + e.getY() - descriptor.position.height();
-            int line = IntPair.getFirst(editor.getPointPosition(0, targetY));
+            final long pointPos = editor.getPointPosition(targetX, targetY);
+            int line = IntPair.getFirst(pointPos);
             if (line >= 0 && line < editor.getLineCount()) {
-                int column = IntPair.getSecond(editor.getPointPosition(targetX, targetY));
+                int column = IntPair.getSecond(pointPos);
+                final boolean makeVisibleOnFoldJump =
+                        editor.isFoldingEnabled() && editor.getFoldingManager().isLineHidden(line);
                 int lastLine = type == RIGHT ? editor.getCursor().getRightLine() : editor.getCursor().getLeftLine();
                 int lastColumn = type == RIGHT ? editor.getCursor().getRightColumn() : editor.getCursor().getLeftColumn();
                 int anotherLine = type != RIGHT ? editor.getCursor().getRightLine() : editor.getCursor().getLeftLine();
@@ -1379,7 +1391,7 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                     switch (type) {
                         case BOTH:
                             editor.cancelAnimation();
-                            editor.setSelection(line, column, false, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
+                            editor.setSelection(line, column, makeVisibleOnFoldJump, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
                             break;
                         case RIGHT:
                             if (anotherLine > line || (anotherLine == line && anotherColumn > column)) {
@@ -1393,10 +1405,10 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                                     SelectionHandle tmp = rightHandle;
                                     rightHandle = leftHandle;
                                     leftHandle = tmp;
-                                    editor.setSelectionRegion(line, column, anotherLine, anotherColumn, false, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
+                                    editor.setSelectionRegion(line, column, anotherLine, anotherColumn, makeVisibleOnFoldJump, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
                                 }
                             } else {
-                                editor.setSelectionRegion(anotherLine, anotherColumn, line, column, false, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
+                                editor.setSelectionRegion(anotherLine, anotherColumn, line, column, makeVisibleOnFoldJump, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
                             }
                             break;
                         case LEFT:
@@ -1411,10 +1423,10 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                                     SelectionHandle tmp = rightHandle;
                                     rightHandle = leftHandle;
                                     leftHandle = tmp;
-                                    editor.setSelectionRegion(anotherLine, anotherColumn, line, column, false, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
+                                    editor.setSelectionRegion(anotherLine, anotherColumn, line, column, makeVisibleOnFoldJump, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
                                 }
                             } else {
-                                editor.setSelectionRegion(line, column, anotherLine, anotherColumn, false, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
+                                editor.setSelectionRegion(line, column, anotherLine, anotherColumn, makeVisibleOnFoldJump, SelectionChangeEvent.CAUSE_SELECTION_HANDLE);
                             }
                             break;
                     }
