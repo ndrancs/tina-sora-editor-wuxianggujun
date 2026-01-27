@@ -2444,6 +2444,13 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         return foldingVirtualCaretEndLine;
     }
 
+    int getFoldingVirtualCaretEndColumn(int startLine) {
+        if (!hasFoldingVirtualCaretAfterSuffix(startLine)) {
+            return -1;
+        }
+        return foldingVirtualCaretEndColumn;
+    }
+
     void clearFoldingVirtualCaret() {
         foldingVirtualCaretStartLine = -1;
         foldingVirtualCaretEndLine = -1;

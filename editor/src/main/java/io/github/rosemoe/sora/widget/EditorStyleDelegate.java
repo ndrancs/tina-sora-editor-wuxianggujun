@@ -65,7 +65,20 @@ public class EditorStyleDelegate implements StyleReceiver {
             final var provider = bracketsProvider;
             final var editor = editorRef.get();
             if (provider != null && editor != null && !editor.getCursor().isSelected() && editor.isHighlightBracketPair()) {
-                foundPair = provider.getPairedBracketAt(editor.getText(), editor.getCursor().getLeft());
+                int index = editor.getCursor().getLeft();
+                try {
+                    final int startLine = editor.getCursor().getLeftLine();
+                    if (editor.hasFoldingVirtualCaretAfterSuffix(startLine)) {
+                        final int endLine = editor.getFoldingVirtualCaretEndLine(startLine);
+                        final int endColumn = editor.getFoldingVirtualCaretEndColumn(startLine);
+                        if (endLine >= 0 && endColumn >= 0) {
+                            index = editor.getText().getCharIndex(endLine, Math.min(endColumn, editor.getText().getColumnCount(endLine)));
+                        }
+                    }
+                } catch (Throwable ignored) {
+                    // fall back to the cursor index
+                }
+                foundPair = provider.getPairedBracketAt(editor.getText(), index);
                 editor.invalidate();
             }
         });

@@ -999,24 +999,20 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
                         final float localX = clickX - textRegionOffset;
                         final float rowWidth = editor.getRenderer().getRowWidth(row);
 
-                        // Only unfold when clicking on the folding placeholder ("...") area.
-                        // Important: keep the right boundary STRICTLY before the closing suffix start
-                        // to avoid swallowing clicks intended for the rendered `}` / `);` etc.
-                        //
-                        // Rendering:
-                        // - placeholder background ends at rowWidth + placeholderWidth + 2*paddingX
-                        // - closing suffix starts at rowWidth + placeholderWidth + 2*paddingX
-                        //
-                        // We intentionally shrink the hit box by one paddingX on the right to tolerate
-                        // glyph negative bearings without stealing closing-suffix taps.
-                        final float placeholderRight = rowWidth + placeholderWidth + paddingX;
-                        if (localX >= rowWidth && localX < placeholderRight) {
-                        editor.toggleFoldPlaceholderSelection(lineIndex);
-                        notifyLater();
-                        if (editor.getProps().foldingDebugLogEnabled) {
-                            Log.d(TAG, "tap: toggle placeholder selection line=" + lineIndex);
-                        }
-                        return true;
+                        // Unfold when clicking on the folding placeholder ("...") area.
+                        // Keep the right boundary STRICTLY before the closing suffix start, so taps
+                        // intended for the rendered `}` / `);` etc will only move the caret.
+                        final float placeholderStart = rowWidth;
+                        final float closingStart = rowWidth + placeholderWidth + paddingX * 2f;
+                        if (localX >= placeholderStart && localX < closingStart) {
+                            editor.clearFoldPlaceholderSelection();
+                            editor.clearFoldingVirtualCaret();
+                            editor.unfold(lineIndex);
+                            notifyLater();
+                            if (editor.getProps().foldingDebugLogEnabled) {
+                                Log.d(TAG, "tap: unfold via placeholder line=" + lineIndex);
+                            }
+                            return true;
                         }
                     }
                 }
@@ -1066,6 +1062,49 @@ public final class EditorTouchEventHandler implements GestureDetector.OnGestureL
         if (editor.isFormatting()) {
             return;
         }
+
+        // Long-press on folding placeholder selects the folded block (for copy/cut) instead of selecting a word.
+        if (editor.isFoldingEnabled()) {
+            try {
+                final float clickX = e.getX() + editor.getOffsetX();
+                final float clickY = e.getY() + editor.getOffsetY();
+                final float textRegionOffset = editor.measureTextRegionOffset();
+                final long pos = editor.getLayout().getCharPositionForLayoutOffset(clickX - textRegionOffset, clickY);
+                final int lineIndex = IntPair.getFirst(pos);
+                if (lineIndex >= 0 && lineIndex < editor.getLineCount()) {
+                    final var region = editor.getFoldingManager().getFoldRegion(lineIndex);
+                    if (region != null && region.collapsed) {
+                        final int safeColumn = Math.min(IntPair.getSecond(pos), editor.getText().getColumnCount(lineIndex));
+                        final int index = editor.getText().getCharIndex(lineIndex, safeColumn);
+                        final int row = editor.getLayout().getRowIndexForPosition(index);
+                        final var rowInfo = editor.getLayout().getRowAt(row);
+                        if (rowInfo.isTrailingRow) {
+                            final float localX = clickX - textRegionOffset;
+                            final float rowWidth = editor.getRenderer().getRowWidth(row);
+                            if (localX > rowWidth) {
+                                final String placeholder = editor.getProps().foldingPlaceholder;
+                                if (placeholder != null && !placeholder.isEmpty()) {
+                                    final float placeholderWidth = editor.getRenderer().getPaint().measureText(placeholder);
+                                    final float paddingX = editor.getDpUnit() * 3f;
+                                    final float closingStart = rowWidth + placeholderWidth + paddingX * 2f;
+                                    if (localX >= rowWidth && localX < closingStart) {
+                                        editor.toggleFoldPlaceholderSelection(lineIndex);
+                                        notifyLater();
+                                        if (editor.getProps().foldingDebugLogEnabled) {
+                                            Log.d(TAG, "longPress: toggle placeholder selection line=" + lineIndex);
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // fall through to default long-press behavior
+            }
+        }
+
         long res = editor.getPointPositionOnScreen(e.getX(), e.getY());
         int line = IntPair.getFirst(res);
         int column = IntPair.getSecond(res);
