@@ -1668,8 +1668,12 @@ public class EditorRenderer {
             } else if (cursor.getLeftLine() == line && isInside(cursor.getLeftColumn(), rowInf.startColumn, rowInf.endColumn, rowInf.isTrailingRow)) {
                 float centerX;
                 if (rowInf.isTrailingRow && editor.hasFoldingVirtualCaretAfterSuffix(line)) {
-                    final float vx = editor.getFoldingVirtualCaretX(line);
-                    centerX = editor.measureTextRegionOffset() + vx - editor.getOffsetX();
+                    final float vx = editor.getFoldingVirtualCaretX(line, row);
+                    if (vx >= 0f) {
+                        centerX = editor.measureTextRegionOffset() + vx - editor.getOffsetX();
+                    } else {
+                        centerX = editor.measureTextRegionOffset() + layout.getCharLayoutOffset(cursor.getLeftLine(), cursor.getLeftColumn())[1] - editor.getOffsetX();
+                    }
                 } else {
                     centerX = editor.measureTextRegionOffset() + layout.getCharLayoutOffset(cursor.getLeftLine(), cursor.getLeftColumn())[1] - editor.getOffsetX();
                 }
@@ -1913,14 +1917,77 @@ public class EditorRenderer {
         if (!closingSuffix.isEmpty() && closingSuffixStartColumn >= 0) {
             float closingX = x + placeholderWidth + paddingX;
             final int fallback = editor.getColorScheme().getColor(EditorColorScheme.TEXT_NORMAL);
+            final var paired = editor.styleDelegate.getFoundBracketPair();
+            final boolean canHighlightPaired = paired != null
+                    && editor.getProps().highlightMatchingDelimiters
+                    && !editor.getCursor().isSelected()
+                    && !editor.inputConnection.composingText.isComposing()
+                    && !(isInvalidTextBounds(paired.leftIndex, paired.leftLength) || isInvalidTextBounds(paired.rightIndex, paired.rightLength));
+            final boolean boldMatching = editor.getProps().boldMatchingDelimiters;
+            final int highlightedFg = editor.getColorScheme().getColor(EditorColorScheme.HIGHLIGHTED_DELIMITERS_FOREGROUND);
+            final int highlightedBg = editor.getColorScheme().getColor(EditorColorScheme.HIGHLIGHTED_DELIMITERS_BACKGROUND);
+            final int highlightedUnderline = editor.getColorScheme().getColor(EditorColorScheme.HIGHLIGHTED_DELIMITERS_UNDERLINE);
+            final int highlightedBorder = editor.getColorScheme().getColor(EditorColorScheme.HIGHLIGHTED_DELIMITERS_BORDER);
+            final float borderWidth = editor.getTextBorderWidth();
+            final float underlineY = editor.getRowBottomOfText(0) - editor.getRowHeightOfText() * 0.05f;
+
+            final var oldStyle = paintGeneral.getStyle();
+            final boolean oldFakeBold = paintGeneral.isFakeBoldText();
             for (int i = 0; i < closingSuffix.length(); i++) {
                 final int col = closingSuffixStartColumn + i;
                 final int color = resolveCharForegroundColor(endLine, col, fallback);
-                paintGeneral.setColor(color);
                 final String chStr = String.valueOf(closingSuffix.charAt(i));
+                final float chWidth = paintGeneral.measureText(chStr);
+
+                boolean highlight = false;
+                if (canHighlightPaired) {
+                    try {
+                        final int index = editor.getText().getCharIndex(endLine, Math.min(col, editor.getText().getColumnCount(endLine)));
+                        highlight = (index >= paired.leftIndex && index < paired.leftIndex + paired.leftLength)
+                                || (index >= paired.rightIndex && index < paired.rightIndex + paired.rightLength);
+                    } catch (Throwable ignored) {
+                        highlight = false;
+                    }
+                }
+
+                if (highlight && (highlightedBg != 0 || (borderWidth > 0 && highlightedBorder != 0))) {
+                    tmpRect.top = getRowTopForBackground(0);
+                    tmpRect.bottom = getRowBottomForBackground(0);
+                    tmpRect.left = closingX;
+                    tmpRect.right = closingX + chWidth;
+                    if (highlightedBg != 0) {
+                        paintOther.setColor(highlightedBg);
+                        drawRowBackgroundRect(canvas, tmpRect, paintOther);
+                    }
+                    if (borderWidth > 0 && highlightedBorder != 0) {
+                        paintOther.setStyle(Paint.Style.STROKE);
+                        paintOther.setColor(highlightedBorder);
+                        paintOther.setStrokeWidth(borderWidth);
+                        drawRowBackgroundRect(canvas, tmpRect, paintOther);
+                        paintOther.setStyle(Paint.Style.FILL);
+                    }
+                }
+
+                if (highlight && boldMatching) {
+                    paintGeneral.setStyle(Paint.Style.FILL_AND_STROKE);
+                    paintGeneral.setFakeBoldText(true);
+                } else {
+                    paintGeneral.setStyle(Paint.Style.FILL);
+                    paintGeneral.setFakeBoldText(oldFakeBold);
+                }
+
+                paintGeneral.setColor((highlight && highlightedFg != 0) ? highlightedFg : color);
                 canvas.drawText(chStr, closingX, baseline, paintGeneral);
-                closingX += paintGeneral.measureText(chStr);
+                if (highlight && highlightedUnderline != 0) {
+                    paintOther.setColor(highlightedUnderline);
+                    paintOther.setStrokeWidth(editor.getRowHeightOfText() * RenderingConstants.MATCHING_DELIMITERS_UNDERLINE_WIDTH_FACTOR);
+                    canvas.drawLine(closingX, underlineY, closingX + chWidth, underlineY, paintOther);
+                }
+
+                closingX += chWidth;
             }
+            paintGeneral.setStyle(oldStyle);
+            paintGeneral.setFakeBoldText(oldFakeBold);
         }
         
         canvas.restore();
@@ -2646,21 +2713,47 @@ public class EditorRenderer {
             }
 
             boolean continuous = paired.leftIndex + paired.leftLength == paired.rightIndex;
+
+            boolean leftHidden = false;
+            boolean rightHidden = false;
+            if (editor.isFoldingEnabled()) {
+                try {
+                    final int leftLine = cursor.getIndexer().getCharPosition(paired.leftIndex).line;
+                    final int rightLine = cursor.getIndexer().getCharPosition(paired.rightIndex).line;
+                    leftHidden = editor.getFoldingManager().isLineHidden(leftLine);
+                    rightHidden = editor.getFoldingManager().isLineHidden(rightLine);
+                } catch (Throwable ignored) {
+                    // fall back to default behavior
+                }
+            }
+
             if (color != 0 || underlineColor != 0) {
                 if (continuous) {
-                    patchTextRegionWithColor(canvas, textOffset, paired.leftIndex, paired.rightIndex + paired.rightLength, color, backgroundColor, underlineColor);
+                    if (!leftHidden && !rightHidden) {
+                        patchTextRegionWithColor(canvas, textOffset, paired.leftIndex, paired.rightIndex + paired.rightLength, color, backgroundColor, underlineColor);
+                    }
                 } else {
-                    patchTextRegionWithColor(canvas, textOffset, paired.leftIndex, paired.leftIndex + paired.leftLength, color, backgroundColor, underlineColor);
-                    patchTextRegionWithColor(canvas, textOffset, paired.rightIndex, paired.rightIndex + paired.rightLength, color, backgroundColor, underlineColor);
+                    if (!leftHidden) {
+                        patchTextRegionWithColor(canvas, textOffset, paired.leftIndex, paired.leftIndex + paired.leftLength, color, backgroundColor, underlineColor);
+                    }
+                    if (!rightHidden) {
+                        patchTextRegionWithColor(canvas, textOffset, paired.rightIndex, paired.rightIndex + paired.rightLength, color, backgroundColor, underlineColor);
+                    }
                 }
                 backgroundColor = 0;
             }
             if (backgroundColor != 0 || (borderColor != 0 && borderWidth > 0)) {
                 if (continuous) {
-                    patchTextBackgroundRegions(canvas, textOffset, paired.leftIndex, paired.rightIndex + paired.rightLength, backgroundColor, borderWidth, borderColor);
+                    if (!leftHidden && !rightHidden) {
+                        patchTextBackgroundRegions(canvas, textOffset, paired.leftIndex, paired.rightIndex + paired.rightLength, backgroundColor, borderWidth, borderColor);
+                    }
                 } else {
-                    patchTextBackgroundRegions(canvas, textOffset, paired.leftIndex, paired.leftIndex + paired.leftLength, backgroundColor, borderWidth, borderColor);
-                    patchTextBackgroundRegions(canvas, textOffset, paired.rightIndex, paired.rightIndex + paired.rightLength, backgroundColor, borderWidth, borderColor);
+                    if (!leftHidden) {
+                        patchTextBackgroundRegions(canvas, textOffset, paired.leftIndex, paired.leftIndex + paired.leftLength, backgroundColor, borderWidth, borderColor);
+                    }
+                    if (!rightHidden) {
+                        patchTextBackgroundRegions(canvas, textOffset, paired.rightIndex, paired.rightIndex + paired.rightLength, backgroundColor, borderWidth, borderColor);
+                    }
                 }
             }
         }

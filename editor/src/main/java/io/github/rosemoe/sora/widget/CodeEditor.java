@@ -365,7 +365,6 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
     private int foldingVirtualCaretEndLine = -1;
     private int foldingVirtualCaretEndColumn = -1;
     private boolean foldingVirtualCaretAfterSuffix = false;
-    private float foldingVirtualCaretX = -1f;
     private DiagnosticsContainer diagnostics;
     private InlayHintsContainer inlayHints;
     private HighlightTextContainer highlightTextContainer;
@@ -2033,6 +2032,24 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
      * @param applySymbolCompletion Apply symbol surroundings and completions
      */
     public void commitText(@NonNull CharSequence text, boolean applyAutoIndent, boolean applySymbolCompletion) {
+        // Special-case: Enter key at folding virtual caret (after rendered closing suffix).
+        // Users expect a newline to be inserted after the folded block without expanding it.
+        if (!cursor.isSelected() && foldingVirtualCaretAfterSuffix && text.length() <= 2) {
+            final String s = text.toString();
+            final boolean isNewline = s.indexOf('\n') >= 0;
+            if (isNewline && hasFoldingVirtualCaretAfterSuffix(foldingVirtualCaretStartLine)) {
+                final int endLine = foldingVirtualCaretEndLine;
+                final int endColumn = foldingVirtualCaretEndColumn;
+                clearFoldingVirtualCaret();
+                if (endLine >= 0 && endLine < getLineCount()) {
+                    final int safeEndColumn = Math.max(0, Math.min(endColumn, this.text.getColumnCount(endLine)));
+                    this.text.insert(endLine, safeEndColumn, text);
+                    setSelection(Math.min(endLine + 1, Math.max(0, getLineCount() - 1)), 0, true, SelectionChangeEvent.CAUSE_KEYBOARD_OR_CODE);
+                    return;
+                }
+            }
+        }
+
         if (!cursor.isSelected()) {
             materializeFoldingVirtualCaretForEdit();
         }
@@ -2416,8 +2433,7 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
                     clearFoldingVirtualCaret();
                     return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
                 }
-                final float caretWidth = getTextPaint().measureText(closing.suffix.substring(0, Math.min(closing.caretOffsetInSuffix, closing.suffix.length())));
-                setFoldingVirtualCaretAfterSuffix(line, endLine, closing.caretColumnExclusive, closingStartX + caretWidth);
+                setFoldingVirtualCaretAfterSuffix(line, endLine, closing.caretColumnExclusive);
                 return IntPair.pack(line, Math.min(text.getColumnCount(line), row.endColumn));
             }
 
@@ -2456,7 +2472,6 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         foldingVirtualCaretEndLine = -1;
         foldingVirtualCaretEndColumn = -1;
         foldingVirtualCaretAfterSuffix = false;
-        foldingVirtualCaretX = -1f;
     }
 
     boolean materializeFoldingVirtualCaretForEdit() {
@@ -2479,19 +2494,32 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
         return true;
     }
 
-    void setFoldingVirtualCaretAfterSuffix(int startLine, int endLine, int endColumnExclusive, float xInTextRegion) {
+    void setFoldingVirtualCaretAfterSuffix(int startLine, int endLine, int endColumnExclusive) {
         foldingVirtualCaretStartLine = startLine;
         foldingVirtualCaretEndLine = endLine;
         foldingVirtualCaretEndColumn = endColumnExclusive;
         foldingVirtualCaretAfterSuffix = true;
-        foldingVirtualCaretX = xInTextRegion;
     }
 
-    float getFoldingVirtualCaretX(int startLine) {
-        if (!hasFoldingVirtualCaretAfterSuffix(startLine)) {
+    float getFoldingVirtualCaretX(int startLine, int row) {
+        if (!hasFoldingVirtualCaretAfterSuffix(startLine) || row < 0) {
             return -1f;
         }
-        return foldingVirtualCaretX;
+        final String placeholder = props.foldingPlaceholder;
+        if (placeholder == null || placeholder.isEmpty()) {
+            return -1f;
+        }
+        final float rowWidth = renderer.getRowWidth(row);
+        final float paddingX = getDpUnit() * 3f;
+        final float placeholderWidth = getTextPaint().measureText(placeholder);
+        final float closingStartX = rowWidth + paddingX + placeholderWidth + paddingX;
+        final FoldingClosingSuffixInfo closing = computeFoldingClosingSuffixInfo(foldingVirtualCaretEndLine);
+        if (closing.suffix.isEmpty() || closing.caretOffsetInSuffix <= 0) {
+            return -1f;
+        }
+        final int caretOffset = Math.min(closing.caretOffsetInSuffix, closing.suffix.length());
+        final float caretWidth = getTextPaint().measureText(closing.suffix, 0, caretOffset);
+        return closingStartX + caretWidth;
     }
 
     boolean isFoldPlaceholderSelected(int startLine) {
