@@ -122,7 +122,7 @@ public final class FoldingManager {
             }
         }
 
-        // Remove collapsed states for non-existing foldable regions and sync recorded endLine to latest.
+        // Remove collapsed states for non-existing foldable regions and sync recorded endLine conservatively.
         // NOTE: We intentionally keep collapsed states across minor edits (including whitespace/empty-line changes).
         for (int i = collapsedByStartLine.size() - 1; i >= 0; i--) {
             final int startLine = collapsedByStartLine.keyAt(i);
@@ -134,8 +134,36 @@ public final class FoldingManager {
                 collapsedEndLineByStartLine.delete(startLine);
                 continue;
             }
-            // Keep collapsed and update the recorded endLine to avoid false invalidation
-            collapsedEndLineByStartLine.put(startLine, newEndLine);
+            final int recordedEndLine = collapsedEndLineByStartLine.get(startLine, -1);
+            if (recordedEndLine < 0) {
+                collapsedEndLineByStartLine.put(startLine, newEndLine);
+                continue;
+            }
+            if (newEndLine <= recordedEndLine) {
+                // Region shrunk, clamp down to avoid hiding unrelated lines.
+                collapsedEndLineByStartLine.put(startLine, newEndLine);
+                continue;
+            }
+            // Region expanded. Avoid unexpectedly hiding newly-created trailing whitespace-only lines
+            // (e.g. Enter pressed right after the folded closing suffix).
+            boolean onlyTrailingWhitespaceLines = true;
+            final int checkFrom = Math.min(recordedEndLine + 1, editor.getLineCount() - 1);
+            final int checkTo = Math.min(newEndLine, editor.getLineCount() - 1);
+            try {
+                final var content = editor.getText();
+                for (int line = checkFrom; line <= checkTo; line++) {
+                    final String lineStr = content.getLineString(line);
+                    if (lineStr != null && !lineStr.trim().isEmpty()) {
+                        onlyTrailingWhitespaceLines = false;
+                        break;
+                    }
+                }
+            } catch (Throwable ignored) {
+                onlyTrailingWhitespaceLines = false;
+            }
+            if (!onlyTrailingWhitespaceLines) {
+                collapsedEndLineByStartLine.put(startLine, newEndLine);
+            }
         }
 
         rebuildHiddenRanges();
@@ -188,7 +216,10 @@ public final class FoldingManager {
         }
         for (int i = idx; i >= 0; i--) {
             final int startLine = collapsedByStartLine.keyAt(i);
-            final int endLine = foldableEndsByStartLine.get(startLine, -1);
+            int endLine = collapsedEndLineByStartLine.get(startLine, -1);
+            if (endLine <= startLine) {
+                endLine = foldableEndsByStartLine.get(startLine, -1);
+            }
             if (endLine <= startLine) {
                 continue;
             }
@@ -206,7 +237,13 @@ public final class FoldingManager {
         if (!collapsedByStartLine.get(startLine)) {
             return false;
         }
-        // Only verify the fold region is still meaningful (exists and can hide at least 1 line)
+        // Keep collapsed state stable for users by preferring the recorded endLine at collapse time.
+        // Falling back to current foldable endLine when no record is available.
+        final int recordedEndLine = collapsedEndLineByStartLine.get(startLine, -1);
+        if (recordedEndLine > startLine) {
+            return true;
+        }
+        // Verify the fold region is still meaningful (exists and can hide at least 1 line)
         final int currentEndLine = foldableEndsByStartLine.get(startLine, -1);
         return currentEndLine > startLine;
     }
@@ -293,7 +330,13 @@ public final class FoldingManager {
         if (idx < 0) {
             return null;
         }
-        final int endLine = foldableEndsByStartLine.valueAt(idx);
+        int endLine = foldableEndsByStartLine.valueAt(idx);
+        if (collapsedByStartLine.get(startLine)) {
+            final int recordedEndLine = collapsedEndLineByStartLine.get(startLine, -1);
+            if (recordedEndLine > startLine) {
+                endLine = recordedEndLine;
+            }
+        }
         if (endLine <= startLine) {
             return null;
         }
@@ -449,7 +492,10 @@ public final class FoldingManager {
         int currentEnd = -1;
         for (int i = 0; i < collapsedByStartLine.size(); i++) {
             final int startLine = collapsedByStartLine.keyAt(i);
-            final int endLine = foldableEndsByStartLine.get(startLine, -1);
+            int endLine = collapsedEndLineByStartLine.get(startLine, -1);
+            if (endLine <= startLine) {
+                endLine = foldableEndsByStartLine.get(startLine, -1);
+            }
             if (endLine <= startLine) {
                 continue;
             }

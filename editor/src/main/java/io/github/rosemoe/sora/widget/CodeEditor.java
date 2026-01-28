@@ -2034,17 +2034,79 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
     public void commitText(@NonNull CharSequence text, boolean applyAutoIndent, boolean applySymbolCompletion) {
         // Special-case: Enter key at folding virtual caret (after rendered closing suffix).
         // Users expect a newline to be inserted after the folded block without expanding it.
-        if (!cursor.isSelected() && foldingVirtualCaretAfterSuffix && text.length() <= 2) {
+        if (!cursor.isSelected() && foldingVirtualCaretAfterSuffix && text.length() > 0) {
             final String s = text.toString();
-            final boolean isNewline = s.indexOf('\n') >= 0;
-            if (isNewline && hasFoldingVirtualCaretAfterSuffix(foldingVirtualCaretStartLine)) {
+            final char firstCh = s.charAt(0);
+            final boolean startsWithNewline = firstCh == '\n' || firstCh == '\r';
+            int afterNewline = 0;
+            if (startsWithNewline) {
+                afterNewline = 1;
+                if (firstCh == '\r' && s.length() >= 2 && s.charAt(1) == '\n') {
+                    afterNewline = 2;
+                }
+            }
+            boolean isEnterLike = startsWithNewline;
+            for (int i = afterNewline; isEnterLike && i < s.length(); i++) {
+                final char ch = s.charAt(i);
+                isEnterLike = ch == ' ' || ch == '\t';
+            }
+
+            if (isEnterLike && hasFoldingVirtualCaretAfterSuffix(foldingVirtualCaretStartLine)) {
                 final int endLine = foldingVirtualCaretEndLine;
-                final int endColumn = foldingVirtualCaretEndColumn;
                 clearFoldingVirtualCaret();
                 if (endLine >= 0 && endLine < getLineCount()) {
-                    final int safeEndColumn = Math.max(0, Math.min(endColumn, this.text.getColumnCount(endLine)));
-                    this.text.insert(endLine, safeEndColumn, text);
-                    setSelection(Math.min(endLine + 1, Math.max(0, getLineCount() - 1)), 0, true, SelectionChangeEvent.CAUSE_KEYBOARD_OR_CODE);
+                    // Insert newline at the end of the folded block's closing line, so we don't split `});` / `};` etc.
+                    final int insertColumn = this.text.getColumnCount(endLine);
+                    final int insertIndex = this.text.getCharIndex(endLine, insertColumn);
+                    CharSequence insertedText = text;
+                    if (applyAutoIndent && props.autoIndent && insertedText.length() != 0) {
+                        final char nl = insertedText.charAt(0);
+                        if (nl == '\n' || nl == '\r') {
+                            try {
+                                final String line = this.text.getLineString(endLine);
+                                int p = 0, spaceCount = 0, tabCount = 0;
+                                while (p < insertColumn && p < line.length()) {
+                                    if (isWhitespace(line.charAt(p))) {
+                                        if (line.charAt(p) == '\t') {
+                                            ++tabCount;
+                                        } else {
+                                            ++spaceCount;
+                                        }
+                                        p++;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                int count = spaceCount + (tabCount * tabWidth);
+                                try {
+                                    count += LanguageHelper.getIndentAdvance(
+                                            editorLanguage,
+                                            new ContentReference(this.text),
+                                            endLine,
+                                            insertColumn,
+                                            spaceCount,
+                                            tabCount
+                                    );
+                                } catch (Exception e) {
+                                    Log.w(LOG_TAG, "Language object error", e);
+                                }
+                                var index = 1;
+                                if (nl == '\r' && insertedText.length() >= 2 && insertedText.charAt(1) == '\n') {
+                                    index = 2;
+                                }
+                                StringBuilder sb = new StringBuilder(insertedText);
+                                sb.insert(index, TextUtils.createIndent(count, tabWidth, editorLanguage.useTab()));
+                                insertedText = sb;
+                            } catch (Throwable t) {
+                                // fall back to raw text
+                            }
+                        }
+                    }
+
+                    this.text.insert(endLine, insertColumn, insertedText);
+                    final int newCursorIndex = Math.max(0, Math.min(insertIndex + insertedText.length(), this.text.length()));
+                    final var newPos = this.text.getIndexer().getCharPosition(newCursorIndex);
+                    setSelection(newPos.line, newPos.column, true, SelectionChangeEvent.CAUSE_KEYBOARD_OR_CODE);
                     return;
                 }
             }
