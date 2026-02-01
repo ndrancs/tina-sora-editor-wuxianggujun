@@ -278,10 +278,12 @@ class LineSpansGenerator(
                         }
                         var style = 0L
                         if (capture.index in languageSpec.localsReferenceIndices) {
+                            val startChar = (startByte / 2).coerceIn(0, content.length)
+                            val endChar = (endByte / 2).coerceIn(startChar, content.length)
                             val def = scopedVariables.findDefinition(
-                                startByte / 2,
-                                endByte / 2,
-                                content.substring(startByte / 2, endByte / 2)
+                                startChar,
+                                endChar,
+                                if (startChar == endChar) "" else content.substring(startChar, endChar)
                             )
                             if (def != null && def.matchedHighlightPattern != -1) {
                                 style = theme.resolveStyleForPattern(def.matchedHighlightPattern)

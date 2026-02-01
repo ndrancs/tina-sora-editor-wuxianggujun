@@ -63,7 +63,7 @@ class TsScopedVariables(tree: TSTree, text: UTF16String, val spec: TsLanguageSpe
                 for (capture in captures) {
                     val startIndex = capture.node.startByte / 2
                     val endIndex = capture.node.endByte / 2
-                    while (startIndex >= scopeStack.peek().endIndex) {
+                    while (scopeStack.size > 1 && startIndex >= scopeStack.peek().endIndex) {
                         scopeStack.pop()
                     }
                     val pattern = capture.index

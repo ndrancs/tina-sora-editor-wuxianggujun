@@ -55,14 +55,23 @@ fun getCaptureContent(
     .map {
         val start = it.node.startByte / 2
         val end = it.node.endByte / 2
+
+        // Tree-sitter nodes can briefly become out-of-date with the underlying text when the document changes
+        // (e.g. replacing a selection during paste). Guard against invalid ranges to avoid crashing the editor.
+        val textLength = text.length
+        val safeStart = start.coerceIn(0, textLength)
+        val safeEnd = end.coerceIn(safeStart, textLength)
+        if (safeStart == safeEnd) {
+            return@map ""
+        }
         when (text) {
             is UTF16String -> {
-                text.subseqChars(start, end).use {
+                text.subseqChars(safeStart, safeEnd).use {
                     it.toString()
                 }
             }
 
-            is Content -> text.substring(start, end)
-            else -> text.substring(start, end)
+            is Content -> text.substring(safeStart, safeEnd)
+            else -> text.substring(safeStart, safeEnd)
         }
     }
