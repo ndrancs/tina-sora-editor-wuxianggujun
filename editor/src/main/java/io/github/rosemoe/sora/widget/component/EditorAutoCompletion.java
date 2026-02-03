@@ -556,6 +556,7 @@ public class EditorAutoCompletion extends EditorPopupWindow implements EditorBui
             return;
         }
         if (System.nanoTime() - requestTime < editor.getProps().cancelCompletionNs) {
+            cancelCompletion();
             hide();
             requestTime = System.nanoTime();
             return;

@@ -23,68 +23,77 @@
   ~     additional information or have any questions
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<LinearLayout
+<!-- 垂直分组折叠式文本操作菜单面板 -->
+<FrameLayout
 	xmlns:android="http://schemas.android.com/apk/res/android"
 	android:layout_width="wrap_content"
-	android:layout_height="match_parent"
-	android:orientation="horizontal"
-	android:gravity="center_vertical"
+	android:layout_height="wrap_content"
 	android:id="@+id/panel_root">
 
-	<HorizontalScrollView
-		android:layout_height="match_parent"
+	<!-- 主菜单面板（垂直排列的分组标题） -->
+	<LinearLayout
+		android:id="@+id/panel_main_menu"
 		android:layout_width="wrap_content"
-		android:id="@+id/panel_hv">
+		android:layout_height="wrap_content"
+		android:orientation="vertical"
+		android:minWidth="120dp"
+		android:paddingTop="8dp"
+		android:paddingBottom="8dp"
+		android:visibility="visible">
 
+		<!-- 分组标题容器（动态添加） -->
 		<LinearLayout
-			android:layout_height="match_parent"
-			android:layout_width="wrap_content"
-			android:orientation="horizontal"
-			android:gravity="center_vertical">
+			android:id="@+id/panel_group_titles_container"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:orientation="vertical" />
 
-			<ImageButton
-				android:id="@+id/panel_btn_select_all"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/selectAll"
-				android:src="@drawable/round_select_all_20"
-				android:background="?android:attr/selectableItemBackground" />
+	</LinearLayout>
 
-			<ImageButton
-				android:id="@+id/panel_btn_copy"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/copy"
-				android:src="@drawable/round_content_copy_20"
-				android:background="?android:attr/selectableItemBackground" />
+	<!-- 子菜单面板（展开后的分组内容） -->
+	<LinearLayout
+		android:id="@+id/panel_sub_menu"
+		android:layout_width="wrap_content"
+		android:layout_height="wrap_content"
+		android:orientation="vertical"
+		android:minWidth="140dp"
+		android:paddingTop="4dp"
+		android:paddingBottom="8dp"
+		android:visibility="gone">
 
-			<ImageButton
-				android:id="@+id/panel_btn_paste"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/paste"
-				android:src="@drawable/round_content_paste_20"
-				android:background="?android:attr/selectableItemBackground" />
+		<!-- 收起按钮（显示分组名称 + ◀） -->
+		<TextView
+			android:id="@+id/panel_btn_collapse"
+			android:layout_width="match_parent"
+			android:layout_height="40dp"
+			android:gravity="center_vertical"
+			android:paddingStart="12dp"
+			android:paddingEnd="12dp"
+			android:textSize="14sp"
+			android:textStyle="bold"
+			android:singleLine="true"
+			android:drawableStart="@drawable/ic_expand_less"
+			android:drawablePadding="8dp"
+			android:background="?android:attr/selectableItemBackground" />
 
-			<ImageButton
-				android:id="@+id/panel_btn_long_select"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@string/sora_editor_long_select"
-				android:src="@drawable/editor_text_select_start"
-				android:background="?android:attr/selectableItemBackground" />
+		<!-- 分隔线 -->
+		<View
+			android:id="@+id/panel_divider"
+			android:layout_width="match_parent"
+			android:layout_height="1dp"
+			android:layout_marginStart="12dp"
+			android:layout_marginEnd="12dp"
+			android:layout_marginTop="4dp"
+			android:layout_marginBottom="4dp"
+			android:background="#20808080" />
 
-			<ImageButton
-				android:id="@+id/panel_btn_cut"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/cut"
-				android:src="@drawable/round_content_cut_20"
-				android:background="?android:attr/selectableItemBackground" />
+		<!-- 子菜单项容器（动态添加） -->
+		<LinearLayout
+			android:id="@+id/panel_sub_items_container"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:orientation="vertical" />
 
-		</LinearLayout>
+	</LinearLayout>
 
-	</HorizontalScrollView>
-
-</LinearLayout>
-
+</FrameLayout>

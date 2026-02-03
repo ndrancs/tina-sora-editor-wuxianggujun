@@ -93,4 +93,5 @@
     <string name="dialog_lsp_entry_msg">是否要打开以Kotlin编写的LSP界面？</string>
     <string name="choice_yes">是</string>
     <string name="choice_no">否</string>
+    <string name="more">更多</string>
 </resources>

@@ -24,14 +24,12 @@
 package io.github.rosemoe.sora.app.lsp;
 
 import android.annotation.SuppressLint;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffColorFilter;
 import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageButton;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -66,12 +64,12 @@ public class LspEditorTextActionWindow extends EditorPopupWindow implements View
     private final static long CHECK_FOR_DISMISS_INTERVAL = 100;
     private final LspEditor lspEditor;
     private final CodeEditor editor;
-    private final ImageButton selectAllBtn;
-    private final ImageButton pasteBtn;
-    private final ImageButton copyBtn;
-    private final ImageButton cutBtn;
-    private final ImageButton longSelectBtn;
-    private final ImageButton moreBtn;
+    private final TextView selectAllBtn;
+    private final TextView pasteBtn;
+    private final TextView copyBtn;
+    private final TextView cutBtn;
+    private final TextView longSelectBtn;
+    private final TextView moreBtn;
     @Nullable
     private OnMoreButtonClickListener moreButtonClickListener;
     private final View rootView;
@@ -115,7 +113,7 @@ public class LspEditorTextActionWindow extends EditorPopupWindow implements View
 
         applyColorScheme();
         setContentView(root);
-        setSize(0, (int) (this.editor.getDpUnit() * 48));
+        setSize(0, (int) (this.editor.getDpUnit() * 44));
         getPopup().setAnimationStyle(io.github.rosemoe.sora.R.style.text_action_popup_animation);
 
         subscribeEvents();
@@ -123,16 +121,16 @@ public class LspEditorTextActionWindow extends EditorPopupWindow implements View
 
     protected void applyColorScheme() {
         GradientDrawable gd = new GradientDrawable();
-        gd.setCornerRadius(5 * editor.getDpUnit());
+        gd.setCornerRadius(8 * editor.getDpUnit());
         gd.setColor(editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_BACKGROUND));
         rootView.setBackground(gd);
         int color = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
-        applyColorFilter(selectAllBtn, color);
-        applyColorFilter(cutBtn, color);
-        applyColorFilter(copyBtn, color);
-        applyColorFilter(pasteBtn, color);
-        applyColorFilter(longSelectBtn, color);
-        applyColorFilter(moreBtn, color);
+        applyTextColor(selectAllBtn, color);
+        applyTextColor(cutBtn, color);
+        applyTextColor(copyBtn, color);
+        applyTextColor(pasteBtn, color);
+        applyTextColor(longSelectBtn, color);
+        applyTextColor(moreBtn, color);
     }
 
     protected void subscribeEvents() {
@@ -178,12 +176,8 @@ public class LspEditorTextActionWindow extends EditorPopupWindow implements View
         }
     }
 
-    protected void applyColorFilter(ImageButton btn, int color) {
-        var drawable = btn.getDrawable();
-        if (drawable == null) {
-            return;
-        }
-        btn.setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_ATOP));
+    protected void applyTextColor(TextView textView, int color) {
+        textView.setTextColor(color);
     }
 
     protected void onHandleStateChange(@NonNull HandleStateChangeEvent event) {

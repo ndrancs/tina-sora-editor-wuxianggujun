@@ -26,69 +26,98 @@
 <LinearLayout
 	xmlns:android="http://schemas.android.com/apk/res/android"
 	android:layout_width="wrap_content"
-	android:layout_height="match_parent"
+	android:layout_height="wrap_content"
 	android:orientation="horizontal"
 	android:gravity="center_vertical"
+	android:paddingStart="4dp"
+	android:paddingEnd="4dp"
+	android:paddingTop="4dp"
+	android:paddingBottom="4dp"
 	android:id="@+id/panel_root">
 
 	<HorizontalScrollView
-		android:layout_height="match_parent"
+		android:layout_height="wrap_content"
 		android:layout_width="wrap_content"
+		android:scrollbars="none"
 		android:id="@+id/panel_hv">
 
 		<LinearLayout
-			android:layout_height="match_parent"
+			android:layout_height="wrap_content"
 			android:layout_width="wrap_content"
 			android:orientation="horizontal"
 			android:gravity="center_vertical">
 
-			<ImageButton
+			<TextView
 				android:id="@+id/panel_btn_select_all"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/selectAll"
-				android:src="@drawable/round_select_all_20"
-				android:background="?android:attr/selectableItemBackground" />
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@android:string/selectAll"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
-			<ImageButton
+			<TextView
 				android:id="@+id/panel_btn_copy"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/copy"
-				android:src="@drawable/round_content_copy_20"
-				android:background="?android:attr/selectableItemBackground" />
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@android:string/copy"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
-			<ImageButton
+			<TextView
 				android:id="@+id/panel_btn_paste"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/paste"
-				android:src="@drawable/round_content_paste_20"
-				android:background="?android:attr/selectableItemBackground" />
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@android:string/paste"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
-			<ImageButton
+			<TextView
 				android:id="@+id/panel_btn_long_select"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@string/sora_editor_long_select"
-				android:src="@drawable/editor_text_select_start"
-				android:background="?android:attr/selectableItemBackground" />
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@string/sora_editor_long_select"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
-			<ImageButton
+			<TextView
 				android:id="@+id/panel_btn_cut"
-				android:layout_width="45dp"
-				android:layout_height="45dp"
-				android:contentDescription="@android:string/cut"
-				android:src="@drawable/round_content_cut_20"
-				android:background="?android:attr/selectableItemBackground" />
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@android:string/cut"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
-            <ImageButton
-                android:id="@+id/panel_more"
-                android:layout_width="45dp"
-                android:layout_height="45dp"
-                android:contentDescription="More"
-                android:src="@drawable/more_vert"
-                android:background="?android:attr/selectableItemBackground" />
+			<TextView
+				android:id="@+id/panel_more"
+				android:layout_width="wrap_content"
+				android:layout_height="36dp"
+				android:gravity="center"
+				android:paddingStart="12dp"
+				android:paddingEnd="12dp"
+				android:text="@string/more"
+				android:textSize="14sp"
+				android:singleLine="true"
+				android:background="?android:attr/selectableItemBackgroundBorderless" />
 
 		</LinearLayout>
 

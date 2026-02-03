@@ -24,19 +24,25 @@
 package io.github.rosemoe.sora.widget.component;
 
 import android.annotation.SuppressLint;
+import android.content.res.TypedArray;
 import android.graphics.PorterDuff;
-import android.graphics.PorterDuffColorFilter;
 import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 import io.github.rosemoe.sora.R;
@@ -56,30 +62,48 @@ import io.github.rosemoe.sora.widget.base.EditorPopupWindow;
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme;
 
 /**
- * This window will show when selecting text to present text actions.
+ * 垂直分组折叠式文本操作菜单窗口
+ * <p>
+ * 当选中文本时显示此窗口，提供文本操作功能。
+ * 菜单采用垂直布局，点击分组标题展开二级菜单。
+ * <p>
+ * 支持：
+ * <ul>
+ *     <li>分组菜单：可注册 {@link TextActionMenuGroup} 添加可折叠的菜单分组</li>
+ *     <li>单项扩展：可注册 {@link ExtraButtonProvider} 添加单个扩展按钮</li>
+ * </ul>
  *
  * @author Rosemoe
+ * @author TinaIDE
  */
-public class EditorTextActionWindow extends EditorPopupWindow implements View.OnClickListener, EditorBuiltinComponent {
+public class EditorTextActionWindow extends EditorPopupWindow implements EditorBuiltinComponent {
     private final static long DELAY = 200;
     private final static long CHECK_FOR_DISMISS_INTERVAL = 100;
     private final CodeEditor editor;
-    private final ImageButton selectAllBtn;
-    private final ImageButton pasteBtn;
-    private final ImageButton copyBtn;
-    private final ImageButton cutBtn;
-    private final ImageButton longSelectBtn;
+
+    // 面板视图
     private final View rootView;
+    private final ViewGroup mainMenuPanel;
+    private final ViewGroup subMenuPanel;
+    private final ViewGroup groupTitlesContainer;
+    private final ViewGroup subItemsContainer;
+    private final TextView collapseBtn;
+    private final View divider;
+
     private final EditorTouchEventHandler handler;
     private final EventManager eventManager;
     private long lastScroll;
     private int lastPosition;
     private int lastCause;
     private boolean enabled = true;
-    
-    // 额外按钮提供者列表
+
+    // 分组菜单
+    private final List<MenuGroupEntry> menuGroups = new ArrayList<>();
+    @Nullable
+    private TextActionMenuGroup expandedGroup = null;
+
+    // 单项扩展按钮（向后兼容）
     private final List<ExtraButtonEntry> extraButtonEntries = new ArrayList<>();
-    private ViewGroup buttonContainer;
 
     /**
      * Create a panel for the given editor
@@ -95,57 +119,66 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
         // Since popup window does provide decor view, we have to pass null to this method
         @SuppressLint("InflateParams")
         View root = this.rootView = LayoutInflater.from(editor.getContext()).inflate(R.layout.text_compose_panel, null);
-        selectAllBtn = root.findViewById(R.id.panel_btn_select_all);
-        cutBtn = root.findViewById(R.id.panel_btn_cut);
-        copyBtn = root.findViewById(R.id.panel_btn_copy);
-        longSelectBtn = root.findViewById(R.id.panel_btn_long_select);
-        pasteBtn = root.findViewById(R.id.panel_btn_paste);
 
-        selectAllBtn.setOnClickListener(this);
-        cutBtn.setOnClickListener(this);
-        copyBtn.setOnClickListener(this);
-        pasteBtn.setOnClickListener(this);
-        longSelectBtn.setOnClickListener(this);
-        
-        // 获取按钮容器，用于动态添加额外按钮
-        View scrollView = root.findViewById(R.id.panel_hv);
-        if (scrollView instanceof ViewGroup) {
-            View child = ((ViewGroup) scrollView).getChildAt(0);
-            if (child instanceof ViewGroup) {
-                buttonContainer = (ViewGroup) child;
-            }
-        }
+        // 主菜单面板
+        mainMenuPanel = root.findViewById(R.id.panel_main_menu);
+        groupTitlesContainer = root.findViewById(R.id.panel_group_titles_container);
+
+        // 子菜单面板
+        subMenuPanel = root.findViewById(R.id.panel_sub_menu);
+        subItemsContainer = root.findViewById(R.id.panel_sub_items_container);
+        collapseBtn = root.findViewById(R.id.panel_btn_collapse);
+        divider = root.findViewById(R.id.panel_divider);
+
+        collapseBtn.setOnClickListener(v -> collapseSubMenu());
 
         applyColorScheme();
         setContentView(root);
-        setSize(0, (int) (this.editor.getDpUnit() * 48));
         getPopup().setAnimationStyle(R.style.text_action_popup_animation);
 
         subscribeEvents();
     }
 
-    protected void applyColorFilter(ImageButton btn, int color) {
-        var drawable = btn.getDrawable();
-        if (drawable == null) {
-            return;
+    protected void applyTextColor(TextView textView, int color) {
+        textView.setTextColor(color);
+        // 同时着色 drawable
+        for (Drawable drawable : textView.getCompoundDrawablesRelative()) {
+            if (drawable != null) {
+                drawable.mutate().setColorFilter(color, PorterDuff.Mode.SRC_IN);
+            }
         }
-        btn.setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_ATOP));
     }
 
     protected void applyColorScheme() {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setCornerRadius(5 * editor.getDpUnit());
-        gd.setColor(editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_BACKGROUND));
-        rootView.setBackground(gd);
-        int color = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
-        applyColorFilter(selectAllBtn, color);
-        applyColorFilter(cutBtn, color);
-        applyColorFilter(copyBtn, color);
-        applyColorFilter(pasteBtn, color);
-        applyColorFilter(longSelectBtn, color);
-        // 应用颜色到所有额外按钮
+        int bgColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_BACKGROUND);
+        int textColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
+
+        // 主菜单面板背景
+        GradientDrawable mainBg = new GradientDrawable();
+        mainBg.setCornerRadius(8 * editor.getDpUnit());
+        mainBg.setColor(bgColor);
+        mainMenuPanel.setBackground(mainBg);
+
+        // 子菜单面板背景
+        GradientDrawable subBg = new GradientDrawable();
+        subBg.setCornerRadius(8 * editor.getDpUnit());
+        subBg.setColor(bgColor);
+        subMenuPanel.setBackground(subBg);
+
+        // 收起按钮颜色
+        applyTextColor(collapseBtn, textColor);
+
+        // 分隔线颜色
+        divider.setBackgroundColor((textColor & 0x00FFFFFF) | 0x20000000);
+
+        // 分组标题按钮颜色
+        for (MenuGroupEntry entry : menuGroups) {
+            applyTextColor(entry.titleButton, textColor);
+        }
+
+        // 额外按钮颜色
         for (ExtraButtonEntry entry : extraButtonEntries) {
-            applyColorFilter(entry.button, color);
+            applyTextColor(entry.button, textColor);
         }
     }
 
@@ -269,16 +302,8 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
 
     /**
      * Get the view root of the panel.
-     * <p>
-     * Root view is {@link android.widget.LinearLayout}
-     * Inside is a {@link android.widget.HorizontalScrollView}
      *
      * @see R.id#panel_root
-     * @see R.id#panel_hv
-     * @see R.id#panel_btn_select_all
-     * @see R.id#panel_btn_copy
-     * @see R.id#panel_btn_cut
-     * @see R.id#panel_btn_paste
      */
     public ViewGroup getView() {
         return (ViewGroup) getPopup().getContentView();
@@ -315,7 +340,15 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
     }
 
     public void displayWindow() {
-        updateBtnState();
+        // 重置为主菜单
+        expandedGroup = null;
+        showMainMenu();
+
+        updateMenuState();
+
+        // 先测量内容大小
+        measureAndUpdateSize();
+
         int top;
         var cursor = editor.getCursor();
         if (cursor.isSelected()) {
@@ -336,22 +369,173 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
     }
 
     /**
-     * Update the state of paste button
+     * 显示主菜单，隐藏子菜单
      */
-    private void updateBtnState() {
-        pasteBtn.setEnabled(editor.hasClip());
-        copyBtn.setVisibility(editor.getCursor().isSelected() ? View.VISIBLE : View.GONE);
-        pasteBtn.setVisibility(editor.isEditable() ? View.VISIBLE : View.GONE);
-        cutBtn.setVisibility((editor.getCursor().isSelected() && editor.isEditable()) ? View.VISIBLE : View.GONE);
-        longSelectBtn.setVisibility((!editor.getCursor().isSelected() && editor.isEditable()) ? View.VISIBLE : View.GONE);
-        
+    private void showMainMenu() {
+        mainMenuPanel.setVisibility(View.VISIBLE);
+        subMenuPanel.setVisibility(View.GONE);
+    }
+
+    /**
+     * 展开分组菜单
+     * @param group 要展开的分组
+     */
+    private void expandGroup(@NonNull TextActionMenuGroup group) {
+        expandedGroup = group;
+
+        // 切换到子菜单面板
+        mainMenuPanel.setVisibility(View.GONE);
+        subMenuPanel.setVisibility(View.VISIBLE);
+
+        // 设置收起按钮文本
+        collapseBtn.setText(group.getGroupLabel());
+
+        // 清空并重新填充子菜单项
+        subItemsContainer.removeAllViews();
+
+        List<TextActionMenuGroup.MenuItem> items = group.getMenuItems(editor);
+        int textColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
+
+        for (TextActionMenuGroup.MenuItem item : items) {
+            if (!item.isVisible(editor)) {
+                continue;
+            }
+
+            TextView itemBtn = createVerticalMenuItem(item.getLabel());
+            itemBtn.setEnabled(item.isEnabled(editor));
+            applyTextColor(itemBtn, textColor);
+
+            // 禁用状态的透明度
+            if (!item.isEnabled(editor)) {
+                itemBtn.setAlpha(0.5f);
+            }
+
+            itemBtn.setOnClickListener(v -> {
+                item.getAction().run();
+                dismiss();
+            });
+
+            subItemsContainer.addView(itemBtn);
+        }
+
+        // 重新测量并更新窗口大小
+        measureAndUpdateSize();
+    }
+
+    /**
+     * 收起子菜单，返回主菜单
+     */
+    private void collapseSubMenu() {
+        expandedGroup = null;
+        showMainMenu();
+        measureAndUpdateSize();
+    }
+
+    /**
+     * 创建垂直菜单项按钮
+     */
+    private TextView createVerticalMenuItem(String text) {
+        TextView button = new TextView(editor.getContext());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            (int) (40 * editor.getDpUnit())
+        );
+        button.setLayoutParams(params);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setPadding(
+            (int) (16 * editor.getDpUnit()), 0,
+            (int) (16 * editor.getDpUnit()), 0
+        );
+        button.setText(text);
+        button.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 14);
+        button.setSingleLine(true);
+
+        // 设置背景
+        int[] attrs = new int[] { android.R.attr.selectableItemBackground };
+        TypedArray ta = editor.getContext().obtainStyledAttributes(attrs);
+        Drawable bg = ta.getDrawable(0);
+        ta.recycle();
+        button.setBackground(bg);
+
+        return button;
+    }
+
+    /**
+     * 创建分组标题按钮（带展开指示器）
+     */
+    @SuppressLint("UseCompatLoadingForDrawables")
+    private TextView createGroupTitleButton(String text) {
+        TextView button = createVerticalMenuItem(text);
+
+        // 设置右侧展开指示器
+        Drawable expandIcon;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            expandIcon = editor.getContext().getDrawable(R.drawable.ic_expand_more);
+        } else {
+            expandIcon = editor.getContext().getResources().getDrawable(R.drawable.ic_expand_more);
+        }
+        if (expandIcon != null) {
+            int iconSize = (int) (16 * editor.getDpUnit());
+            expandIcon.setBounds(0, 0, iconSize, iconSize);
+            button.setCompoundDrawablesRelative(null, null, expandIcon, null);
+            button.setCompoundDrawablePadding((int) (8 * editor.getDpUnit()));
+        }
+
+        return button;
+    }
+
+    /**
+     * 测量并更新窗口大小
+     */
+    private void measureAndUpdateSize() {
+        rootView.measure(
+            View.MeasureSpec.makeMeasureSpec(1000000, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(100000, View.MeasureSpec.AT_MOST)
+        );
+        int width = Math.min(rootView.getMeasuredWidth(), (int) (editor.getDpUnit() * 200));
+        int height = rootView.getMeasuredHeight();
+        setSize(width, height);
+    }
+
+    /**
+     * 更新菜单状态
+     */
+    private void updateMenuState() {
+        // 更新分组标题按钮
+        updateGroupTitleButtons();
+
         // 更新额外按钮的可见性
         updateExtraButtonVisibility();
-        
-        rootView.measure(View.MeasureSpec.makeMeasureSpec(1000000, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(100000, View.MeasureSpec.AT_MOST));
-        setSize(Math.min(rootView.getMeasuredWidth(), (int) (editor.getDpUnit() * 280)), getHeight());
     }
-    
+
+    /**
+     * 更新分组标题按钮
+     */
+    private void updateGroupTitleButtons() {
+        int textColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
+
+        for (MenuGroupEntry entry : menuGroups) {
+            boolean shouldShow = entry.group.shouldShowGroup(editor);
+            if (shouldShow) {
+                // 检查分组是否有可见的菜单项
+                List<TextActionMenuGroup.MenuItem> items = entry.group.getMenuItems(editor);
+                boolean hasVisibleItems = false;
+                for (TextActionMenuGroup.MenuItem item : items) {
+                    if (item.isVisible(editor)) {
+                        hasVisibleItems = true;
+                        break;
+                    }
+                }
+                shouldShow = hasVisibleItems;
+            }
+
+            entry.titleButton.setVisibility(shouldShow ? View.VISIBLE : View.GONE);
+            if (shouldShow) {
+                applyTextColor(entry.titleButton, textColor);
+            }
+        }
+    }
+
     /**
      * 更新所有额外按钮的可见性
      */
@@ -361,59 +545,152 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
             entry.button.setVisibility(shouldShow ? View.VISIBLE : View.GONE);
         }
     }
-    
+
+    // ==================== 分组菜单管理 API ====================
+
+    /**
+     * 添加菜单分组
+     * @param group 菜单分组
+     */
+    public void addMenuGroup(@NonNull TextActionMenuGroup group) {
+        // 检查是否已存在
+        for (MenuGroupEntry entry : menuGroups) {
+            if (entry.group == group) {
+                return;
+            }
+        }
+
+        // 创建分组标题按钮
+        TextView titleButton = createGroupTitleButton(group.getGroupLabel());
+        titleButton.setVisibility(View.GONE);
+        titleButton.setOnClickListener(v -> expandGroup(group));
+
+        // 应用颜色
+        int textColor = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
+        applyTextColor(titleButton, textColor);
+
+        // 添加到容器
+        groupTitlesContainer.addView(titleButton);
+
+        // 保存条目
+        MenuGroupEntry entry = new MenuGroupEntry(group, titleButton);
+        menuGroups.add(entry);
+
+        // 按优先级排序
+        Collections.sort(menuGroups, Comparator.comparingInt(e -> e.group.getPriority()));
+
+        // 重新排列按钮顺序
+        reorderGroupButtons();
+    }
+
+    /**
+     * 移除菜单分组
+     * @param group 要移除的分组
+     */
+    public void removeMenuGroup(@NonNull TextActionMenuGroup group) {
+        MenuGroupEntry toRemove = null;
+        for (MenuGroupEntry entry : menuGroups) {
+            if (entry.group == group) {
+                toRemove = entry;
+                break;
+            }
+        }
+
+        if (toRemove != null) {
+            groupTitlesContainer.removeView(toRemove.titleButton);
+            menuGroups.remove(toRemove);
+
+            // 如果当前展开的是被移除的分组，收起菜单
+            if (expandedGroup == group) {
+                collapseSubMenu();
+            }
+        }
+    }
+
+    /**
+     * 清除所有菜单分组
+     */
+    public void clearMenuGroups() {
+        for (MenuGroupEntry entry : menuGroups) {
+            groupTitlesContainer.removeView(entry.titleButton);
+        }
+        menuGroups.clear();
+        expandedGroup = null;
+    }
+
+    /**
+     * 获取所有菜单分组
+     */
+    @NonNull
+    public List<TextActionMenuGroup> getMenuGroups() {
+        List<TextActionMenuGroup> groups = new ArrayList<>();
+        for (MenuGroupEntry entry : menuGroups) {
+            groups.add(entry.group);
+        }
+        return groups;
+    }
+
+    /**
+     * 重新排列分组按钮顺序
+     */
+    private void reorderGroupButtons() {
+        groupTitlesContainer.removeAllViews();
+        for (MenuGroupEntry entry : menuGroups) {
+            groupTitlesContainer.addView(entry.titleButton);
+        }
+    }
+
+    /**
+     * 菜单分组条目
+     */
+    private static class MenuGroupEntry {
+        final TextActionMenuGroup group;
+        final TextView titleButton;
+
+        MenuGroupEntry(TextActionMenuGroup group, TextView titleButton) {
+            this.group = group;
+            this.titleButton = titleButton;
+        }
+    }
+
+    // ==================== 单项扩展按钮 API（向后兼容） ====================
+
     /**
      * 添加额外按钮提供者
      * @param provider 按钮提供者
      */
     public void addExtraButtonProvider(@NonNull ExtraButtonProvider provider) {
-        if (buttonContainer == null) {
-            return;
-        }
-        
         // 检查是否已经添加过相同的提供者
         for (ExtraButtonEntry entry : extraButtonEntries) {
             if (entry.provider == provider) {
                 return;
             }
         }
-        
-        // 创建新的额外按钮
-        ImageButton button = new ImageButton(editor.getContext());
-        android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(
-            (int) (45 * editor.getDpUnit()),
-            android.widget.LinearLayout.LayoutParams.MATCH_PARENT
-        );
-        button.setLayoutParams(params);
-        button.setImageResource(provider.getIconResource());
-        button.setBackgroundResource(android.R.color.transparent);
-        button.setContentDescription(provider.getContentDescription());
+
+        // 创建新的文本按钮
+        TextView button = createVerticalMenuItem(provider.getButtonLabel());
         button.setVisibility(View.GONE);
         button.setOnClickListener(v -> {
             provider.onButtonClick(editor);
             dismiss();
         });
-        
+
         // 应用颜色
         int color = editor.getColorScheme().getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR);
-        applyColorFilter(button, color);
-        
-        // 添加到容器
-        buttonContainer.addView(button);
-        
+        applyTextColor(button, color);
+
+        // 添加到分组标题容器中
+        groupTitlesContainer.addView(button);
+
         // 保存到列表
         extraButtonEntries.add(new ExtraButtonEntry(provider, button));
     }
-    
+
     /**
      * 移除额外按钮提供者
      * @param provider 要移除的按钮提供者
      */
     public void removeExtraButtonProvider(@NonNull ExtraButtonProvider provider) {
-        if (buttonContainer == null) {
-            return;
-        }
-        
         ExtraButtonEntry toRemove = null;
         for (ExtraButtonEntry entry : extraButtonEntries) {
             if (entry.provider == provider) {
@@ -421,27 +698,23 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
                 break;
             }
         }
-        
+
         if (toRemove != null) {
-            buttonContainer.removeView(toRemove.button);
+            groupTitlesContainer.removeView(toRemove.button);
             extraButtonEntries.remove(toRemove);
         }
     }
-    
+
     /**
      * 清除所有额外按钮提供者
      */
     public void clearExtraButtonProviders() {
-        if (buttonContainer == null) {
-            return;
-        }
-        
         for (ExtraButtonEntry entry : extraButtonEntries) {
-            buttonContainer.removeView(entry.button);
+            groupTitlesContainer.removeView(entry.button);
         }
         extraButtonEntries.clear();
     }
-    
+
     /**
      * 获取所有额外按钮提供者
      */
@@ -453,42 +726,38 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
         }
         return providers;
     }
-    
+
     /**
-     * 额外按钮条目，保存提供者和对应的按钮
+     * 额外按钮条目
      */
     private static class ExtraButtonEntry {
         final ExtraButtonProvider provider;
-        final ImageButton button;
-        
-        ExtraButtonEntry(ExtraButtonProvider provider, ImageButton button) {
+        final TextView button;
+
+        ExtraButtonEntry(ExtraButtonProvider provider, TextView button) {
             this.provider = provider;
             this.button = button;
         }
     }
-    
+
     /**
      * 额外按钮提供者接口
      */
     public interface ExtraButtonProvider {
         /**
-         * 获取按钮图标资源 ID
+         * 获取按钮显示的文本标签
+         * @return 按钮上显示的文字
          */
-        int getIconResource();
-        
-        /**
-         * 获取按钮的内容描述（用于无障碍）
-         */
-        @Nullable
-        String getContentDescription();
-        
+        @NonNull
+        String getButtonLabel();
+
         /**
          * 判断是否应该显示按钮
          * @param editor 编辑器实例
          * @return 如果应该显示返回 true
          */
         boolean shouldShowButton(@NonNull CodeEditor editor);
-        
+
         /**
          * 按钮点击回调
          * @param editor 编辑器实例
@@ -501,30 +770,25 @@ public class EditorTextActionWindow extends EditorPopupWindow implements View.On
         if (!enabled || editor.getSnippetController().isInSnippet() || !editor.hasFocus() || editor.isInMouseMode()) {
             return;
         }
+        // 检查是否有可显示的菜单项
+        boolean hasVisibleGroups = false;
+        for (MenuGroupEntry entry : menuGroups) {
+            if (entry.titleButton.getVisibility() == View.VISIBLE) {
+                hasVisibleGroups = true;
+                break;
+            }
+        }
+        boolean hasVisibleExtras = false;
+        for (ExtraButtonEntry entry : extraButtonEntries) {
+            if (entry.button.getVisibility() == View.VISIBLE) {
+                hasVisibleExtras = true;
+                break;
+            }
+        }
+        if (!hasVisibleGroups && !hasVisibleExtras) {
+            return;
+        }
         super.show();
     }
 
-    @Override
-    public void onClick(View view) {
-        int id = view.getId();
-        if (id == R.id.panel_btn_select_all) {
-            editor.selectAll();
-            return;
-        } else if (id == R.id.panel_btn_cut) {
-            if (editor.getCursor().isSelected()) {
-                editor.cutText();
-            }
-        } else if (id == R.id.panel_btn_paste) {
-            editor.pasteText();
-            editor.setSelection(editor.getCursor().getRightLine(), editor.getCursor().getRightColumn());
-        } else if (id == R.id.panel_btn_copy) {
-            editor.copyText();
-            editor.setSelection(editor.getCursor().getRightLine(), editor.getCursor().getRightColumn());
-        } else if (id == R.id.panel_btn_long_select) {
-            editor.beginLongSelect();
-        }
-        dismiss();
-    }
-
 }
-
