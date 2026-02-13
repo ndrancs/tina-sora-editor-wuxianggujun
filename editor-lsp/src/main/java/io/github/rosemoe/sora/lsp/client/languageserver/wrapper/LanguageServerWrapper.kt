@@ -525,7 +525,10 @@ class LanguageServerWrapper(
 
 
     /**
-     * @return the LanguageServer
+     * Returns the underlying [LanguageServer] instance, or null if not yet initialized.
+     *
+     * Useful for sending custom/extension requests (e.g. clangd's `textDocument/switchSourceHeader`)
+     * that are not part of the standard LSP protocol and thus not covered by [RequestManager].
      */
     fun getServer(): LanguageServer? {
         start()
