@@ -24,14 +24,16 @@
 
 package io.github.rosemoe.sora.lang.styling.patching
 
+import io.github.rosemoe.sora.lang.styling.Span
 import io.github.rosemoe.sora.lang.styling.color.ResolvableColor
+import io.github.rosemoe.sora.lang.styling.span.SpanColorResolver
 
 class StylePatch(
     var startLine: Int,
     var startColumn: Int,
     var endLine: Int,
     var endColumn: Int
-) : Comparable<StylePatch> {
+) : Comparable<StylePatch>, SpanColorResolver {
 
     init {
         if (startLine < 0 || startColumn < 0 || endLine < 0 || endColumn < 0) {
@@ -46,6 +48,11 @@ class StylePatch(
     var overrideBackground: ResolvableColor? = null
     var overrideItalics: Boolean? = null
     var overrideBold: Boolean? = null
+    var overrideStrikeThrough: Boolean? = null
+
+    override fun getForegroundColor(span: Span): ResolvableColor? = overrideForeground
+
+    override fun getBackgroundColor(span: Span): ResolvableColor? = overrideBackground
 
     override fun compareTo(other: StylePatch): Int {
         var res = startLine.compareTo(other.startLine)

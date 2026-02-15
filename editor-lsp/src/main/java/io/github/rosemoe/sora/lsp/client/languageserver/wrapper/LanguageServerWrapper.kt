@@ -62,6 +62,11 @@ import org.eclipse.lsp4j.PublishDiagnosticsCapabilities
 import org.eclipse.lsp4j.RangeFormattingCapabilities
 import org.eclipse.lsp4j.ReferencesCapabilities
 import org.eclipse.lsp4j.RenameCapabilities
+import org.eclipse.lsp4j.SemanticTokenModifiers
+import org.eclipse.lsp4j.SemanticTokenTypes
+import org.eclipse.lsp4j.SemanticTokensCapabilities
+import org.eclipse.lsp4j.SemanticTokensClientCapabilitiesRequests
+import org.eclipse.lsp4j.SemanticTokensClientCapabilitiesRequestsFull
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.SignatureHelpCapabilities
 import org.eclipse.lsp4j.SignatureInformationCapabilities
@@ -402,6 +407,54 @@ class LanguageServerWrapper(
             synchronization =
                 SynchronizationCapabilities(true, true, true)
             publishDiagnostics = PublishDiagnosticsCapabilities(true)
+            semanticTokens = SemanticTokensCapabilities().apply {
+                requests = SemanticTokensClientCapabilitiesRequests().apply {
+                    setRange(true)
+                    setFull(SemanticTokensClientCapabilitiesRequestsFull(true))
+                }
+                tokenTypes = listOf(
+                    SemanticTokenTypes.Namespace,
+                    SemanticTokenTypes.Type,
+                    SemanticTokenTypes.Class,
+                    SemanticTokenTypes.Enum,
+                    SemanticTokenTypes.Interface,
+                    SemanticTokenTypes.Struct,
+                    SemanticTokenTypes.TypeParameter,
+                    SemanticTokenTypes.Parameter,
+                    SemanticTokenTypes.Variable,
+                    SemanticTokenTypes.Property,
+                    SemanticTokenTypes.EnumMember,
+                    SemanticTokenTypes.Event,
+                    SemanticTokenTypes.Function,
+                    SemanticTokenTypes.Method,
+                    SemanticTokenTypes.Macro,
+                    SemanticTokenTypes.Keyword,
+                    SemanticTokenTypes.Modifier,
+                    SemanticTokenTypes.Comment,
+                    SemanticTokenTypes.String,
+                    SemanticTokenTypes.Number,
+                    SemanticTokenTypes.Regexp,
+                    SemanticTokenTypes.Operator,
+                    SemanticTokenTypes.Decorator
+                )
+                tokenModifiers = listOf(
+                    SemanticTokenModifiers.Declaration,
+                    SemanticTokenModifiers.Definition,
+                    SemanticTokenModifiers.Readonly,
+                    SemanticTokenModifiers.Static,
+                    SemanticTokenModifiers.Deprecated,
+                    SemanticTokenModifiers.Abstract,
+                    SemanticTokenModifiers.Async,
+                    SemanticTokenModifiers.Modification,
+                    SemanticTokenModifiers.Documentation,
+                    SemanticTokenModifiers.DefaultLibrary
+                )
+                formats = listOf("relative")
+                overlappingTokenSupport = false
+                multilineTokenSupport = false
+                serverCancelSupport = true
+                augmentsSyntaxTokens = true
+            }
         }
 
         initParams.apply {

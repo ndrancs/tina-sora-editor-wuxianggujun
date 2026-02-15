@@ -82,6 +82,11 @@ import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.ReferenceParams
 import org.eclipse.lsp4j.RegistrationParams
 import org.eclipse.lsp4j.RenameParams
+import org.eclipse.lsp4j.SemanticTokens
+import org.eclipse.lsp4j.SemanticTokensDelta
+import org.eclipse.lsp4j.SemanticTokensDeltaParams
+import org.eclipse.lsp4j.SemanticTokensParams
+import org.eclipse.lsp4j.SemanticTokensRangeParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.SignatureHelp
@@ -270,6 +275,22 @@ class DefaultRequestManager(
                 if (serverCapabilities.workspaceSymbolProvider?.left == true || serverCapabilities.workspaceSymbolProvider?.right != null) workspaceService.symbol(
                     params
                 ) else null
+            } catch (e: Exception) {
+                crashed(e)
+                null
+            }
+        } else null
+    }
+
+    override fun resolveWorkspaceSymbol(unresolved: WorkspaceSymbol): CompletableFuture<WorkspaceSymbol>? {
+        return if (checkStatus()) {
+            try {
+                val options = serverCapabilities.workspaceSymbolProvider?.right
+                if (options?.resolveProvider == true) {
+                    workspaceService.resolveWorkspaceSymbol(unresolved)
+                } else {
+                    null
+                }
             } catch (e: Exception) {
                 crashed(e)
                 null
@@ -713,6 +734,51 @@ class DefaultRequestManager(
                 if (serverCapabilities.foldingRangeProvider?.left == true || serverCapabilities.foldingRangeProvider?.right != null) textDocumentService.foldingRange(
                     params
                 ) else null
+            } catch (e: Exception) {
+                crashed(e)
+                null
+            }
+        } else null
+    }
+
+    override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens>? {
+        return if (checkStatus()) {
+            try {
+                val provider = serverCapabilities.semanticTokensProvider ?: return null
+                val full = provider.full ?: return null
+                val supported = (full.isLeft && full.left == true) || full.isRight
+                if (!supported) return null
+                textDocumentService.semanticTokensFull(params)
+            } catch (e: Exception) {
+                crashed(e)
+                null
+            }
+        } else null
+    }
+
+    override fun semanticTokensFullDelta(params: SemanticTokensDeltaParams): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>>? {
+        return if (checkStatus()) {
+            try {
+                val provider = serverCapabilities.semanticTokensProvider ?: return null
+                val full = provider.full ?: return null
+                val supported = full.isRight && full.right.delta == true
+                if (!supported) return null
+                textDocumentService.semanticTokensFullDelta(params)
+            } catch (e: Exception) {
+                crashed(e)
+                null
+            }
+        } else null
+    }
+
+    override fun semanticTokensRange(params: SemanticTokensRangeParams): CompletableFuture<SemanticTokens>? {
+        return if (checkStatus()) {
+            try {
+                val provider = serverCapabilities.semanticTokensProvider ?: return null
+                val range = provider.range ?: return null
+                val supported = (range.isLeft && range.left == true) || range.isRight
+                if (!supported) return null
+                textDocumentService.semanticTokensRange(params)
             } catch (e: Exception) {
                 crashed(e)
                 null

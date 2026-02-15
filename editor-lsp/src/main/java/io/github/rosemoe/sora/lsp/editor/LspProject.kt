@@ -43,6 +43,9 @@ import io.github.rosemoe.sora.lsp.events.format.RangeFormattingEvent
 import io.github.rosemoe.sora.lsp.events.highlight.DocumentHighlightEvent
 import io.github.rosemoe.sora.lsp.events.hover.HoverEvent
 import io.github.rosemoe.sora.lsp.events.inlayhint.InlayHintEvent
+import io.github.rosemoe.sora.lsp.events.semantictokens.SemanticTokensEvent
+import io.github.rosemoe.sora.lsp.events.semantictokens.DefaultSemanticTokensStyleProvider
+import io.github.rosemoe.sora.lsp.events.semantictokens.SemanticTokensStyleProvider
 import io.github.rosemoe.sora.lsp.events.signature.SignatureHelpEvent
 import io.github.rosemoe.sora.lsp.events.workspace.WorkSpaceApplyEditEvent
 import io.github.rosemoe.sora.lsp.events.workspace.WorkSpaceExecuteCommand
@@ -72,6 +75,8 @@ class LspProject(
     private val editors = ConcurrentHashMap<FileUri, LspEditor>()
 
     val diagnosticsContainer = DiagnosticsContainer()
+
+    var semanticTokensStyleProvider: SemanticTokensStyleProvider = DefaultSemanticTokensStyleProvider
 
     private var isInit = false
 
@@ -190,7 +195,8 @@ class LspProject(
             ::DocumentOpenEvent, ::HoverEvent, ::CodeActionEventEvent,
             ::WorkSpaceApplyEditEvent, ::WorkSpaceExecuteCommand,
             ::InlayHintEvent, ::DocumentHighlightEvent,
-            ::DocumentColorEvent
+            ::DocumentColorEvent,
+            ::SemanticTokensEvent
         )
 
         events.forEach {

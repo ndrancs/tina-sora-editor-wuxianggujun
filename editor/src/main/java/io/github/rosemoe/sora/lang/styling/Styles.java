@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.rosemoe.sora.lang.styling.line.LineAnchorStyle;
 import io.github.rosemoe.sora.lang.styling.line.LineStyles;
+import io.github.rosemoe.sora.lang.styling.patching.SparseStylePatches;
 import io.github.rosemoe.sora.text.CharPosition;
 import io.github.rosemoe.sora.util.MutableInt;
 
@@ -51,6 +52,14 @@ import io.github.rosemoe.sora.util.MutableInt;
 public class Styles {
 
     public Spans spans;
+
+    /**
+     * Optional style patches applied on top of {@link #spans}.
+     * <p>
+     * These patches are expected to be sparse and can be used for LSP semantic highlighting.
+     */
+    @Nullable
+    public SparseStylePatches stylePatches;
 
     /**
      * <strong>Sorted</strong> list of LineStyles
@@ -137,6 +146,9 @@ public class Styles {
      */
     public void adjustOnInsert(@NonNull CharPosition start, @NonNull CharPosition end) {
         spans.adjustOnInsert(start, end);
+        if (stylePatches != null) {
+            stylePatches.updateForInsertion(start.line, start.column, end.line, end.column);
+        }
         var delta = end.line - start.line;
         if (delta == 0) {
             return;
@@ -158,6 +170,9 @@ public class Styles {
      */
     public void adjustOnDelete(@NonNull CharPosition start, @NonNull CharPosition end) {
         spans.adjustOnDelete(start, end);
+        if (stylePatches != null) {
+            stylePatches.updateForDeletion(start.line, start.column, end.line, end.column);
+        }
         var delta = start.line - end.line;
         if (delta == 0) {
             return;

@@ -175,6 +175,9 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                 return
             }
             val scopedVariables = TsScopedVariables(tree!!, localText, languageSpec)
+            if (abort || isInterrupted || languageSpec.closed) {
+                return
+            }
             if (thread == this && messageQueue.isEmpty()) {
                 val oldTree = (styles.spans as LineSpansGenerator?)?.safeTree
                 val newTree = SafeTsTree(tree!!.copy())

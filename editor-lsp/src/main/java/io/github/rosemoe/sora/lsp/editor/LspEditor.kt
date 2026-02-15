@@ -33,6 +33,8 @@ import io.github.rosemoe.sora.event.ScrollEvent
 import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.event.SubscriptionReceipt
 import io.github.rosemoe.sora.lang.Language
+import io.github.rosemoe.sora.lang.styling.patching.SparseStylePatches
+import io.github.rosemoe.sora.lang.styling.patching.StylePatch
 import io.github.rosemoe.sora.lsp.client.languageserver.requestmanager.RequestManager
 import io.github.rosemoe.sora.lsp.client.languageserver.serverdefinition.LanguageServerDefinition
 import io.github.rosemoe.sora.lsp.client.languageserver.wrapper.LanguageServerWrapper
@@ -66,6 +68,7 @@ import org.eclipse.lsp4j.Diagnostic
 import org.eclipse.lsp4j.DocumentHighlight
 import org.eclipse.lsp4j.DocumentHighlightKind
 import org.eclipse.lsp4j.Hover
+import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.SignatureHelp
 import org.eclipse.lsp4j.TextDocumentSyncKind
@@ -126,6 +129,21 @@ class LspEditor(
                 coroutineScope.launch {
                     this@LspEditor.requestInlayHint(CharPosition(0, 0))
                     this@LspEditor.requestDocumentColor()
+                }
+            }
+
+            if (isConnected && isEnableSemanticTokens) {
+                val provider = requestManager.capabilities?.semanticTokensProvider
+                val rangeSupport = provider?.range
+                val rangeSupported =
+                    rangeSupport != null && ((rangeSupport.isLeft && rangeSupport.left == true) || rangeSupport.isRight)
+
+                if (rangeSupported) {
+                    requestSemanticTokensForViewport(currentEditor)
+                } else {
+                    coroutineScope.launch {
+                        this@LspEditor.requestSemanticTokens()
+                    }
                 }
             }
 
@@ -217,6 +235,24 @@ class LspEditor(
             }
         }
 
+    /**
+     * Enable LSP semantic tokens based semantic highlighting (style patches overlay).
+     */
+    var isEnableSemanticTokens: Boolean = true
+        set(value) {
+            if (field == value) {
+                return
+            }
+            field = value
+            if (value && isConnected) {
+                coroutineScope.launch {
+                    this@LspEditor.requestSemanticTokens()
+                }
+            } else {
+                showSemanticTokens(null)
+            }
+        }
+
     val hoverWindow
         get() = uiDelegate.hoverWindow
 
@@ -231,6 +267,33 @@ class LspEditor(
 
     val requestManagers: List<RequestManager>
         get() = delegate.aggregatedRequestManager.activeManagers
+
+    private fun requestSemanticTokensForViewport(editorInstance: CodeEditor, paddingLines: Int = 50) {
+        editorInstance.post {
+            val lineCount = editorInstance.lineCount
+            if (lineCount <= 0) {
+                coroutineScope.launch {
+                    this@LspEditor.requestSemanticTokens()
+                }
+                return@post
+            }
+
+            val startLine = (editorInstance.firstVisibleLine - paddingLines).coerceAtLeast(0)
+            val endLine = (editorInstance.lastVisibleLine + paddingLines).coerceAtMost(lineCount - 1)
+            if (endLine < startLine) {
+                coroutineScope.launch {
+                    this@LspEditor.requestSemanticTokens()
+                }
+                return@post
+            }
+
+            val endColumn = editorInstance.text.getColumnCount(endLine)
+            val range = Range(Position(startLine, 0), Position(endLine, endColumn))
+            coroutineScope.launch {
+                this@LspEditor.requestSemanticTokens(range)
+            }
+        }
+    }
 
     init {
         serverDefinition = project.getServerDefinition(fileExt)
@@ -266,6 +329,20 @@ class LspEditor(
 
             if (capabilities.inlayHintProvider?.left != false || capabilities.inlayHintProvider?.right != null) {
                 requestInlayHint(CharPosition(0, 0))
+            }
+
+            if (isEnableSemanticTokens) {
+                val semanticTokensProvider = capabilities.semanticTokensProvider
+                val rangeSupport = semanticTokensProvider?.range
+                val rangeSupported =
+                    rangeSupport != null && ((rangeSupport.isLeft && rangeSupport.left == true) || rangeSupport.isRight)
+
+                val editorInstance = editor
+                if (rangeSupported && editorInstance != null) {
+                    requestSemanticTokensForViewport(editorInstance)
+                } else {
+                    requestSemanticTokens()
+                }
             }
 
             isConnected = true
@@ -399,6 +476,47 @@ class LspEditor(
 
     internal fun showDocumentColors(documentColors: List<ColorInformation>?) {
         uiDelegate.showDocumentColors(documentColors)
+    }
+
+    internal fun showSemanticTokens(patches: List<StylePatch>?, range: Range? = null) {
+        val editorInstance = editor ?: return
+        editorInstance.post {
+            val styles = editorInstance.styles ?: return@post
+            val hasPatches = !patches.isNullOrEmpty()
+            val patchContainer = styles.stylePatches
+            if (range == null) {
+                if (!hasPatches) {
+                    if (patchContainer == null || patchContainer.isEmpty()) {
+                        return@post
+                    }
+                    patchContainer.clear()
+                } else {
+                    val container = patchContainer ?: SparseStylePatches().also { styles.stylePatches = it }
+                    container.clear()
+                    container.addAll(patches)
+                }
+            } else {
+                if (!hasPatches && (patchContainer == null || patchContainer.isEmpty())) {
+                    return@post
+                }
+
+                val startLine = range.start.line.coerceAtLeast(0)
+                val endLine = range.end.line.coerceAtLeast(startLine)
+                val container = patchContainer ?: SparseStylePatches().also { styles.stylePatches = it }
+                container.replaceLineRange(startLine, endLine, patches ?: emptyList())
+
+                val lineCount = editorInstance.lineCount
+                if (lineCount > 0) {
+                    val keepPaddingLines = 60
+                    val viewportStartLine = (editorInstance.firstVisibleLine - keepPaddingLines).coerceAtLeast(0)
+                    val viewportEndLine = (editorInstance.lastVisibleLine + keepPaddingLines).coerceAtMost(lineCount - 1)
+                    val keepStartLine = minOf(startLine, viewportStartLine)
+                    val keepEndLine = maxOf(endLine, viewportEndLine)
+                    container.pruneOutsideLineRange(keepStartLine, keepEndLine)
+                }
+            }
+            editorInstance.setStyles(styles)
+        }
     }
 
 

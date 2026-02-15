@@ -105,77 +105,132 @@ class LspLanguage(var editor: LspEditor) : Language {
             emptyList()
         }
 
+        // 1) 未连接：仅使用 wrapperLanguage 的本地候选（如果有）
         if (!editor.isConnected) {
             if (fallbackItems.isEmpty()) return
-            val filtered = filterCompletionItems(content, position, fallbackItems)
-            publisher.setComparator(createCompletionItemComparator(filtered))
-            publisher.addItems(filtered)
+            val filteredFallback = filterCompletionItems(content, position, fallbackItems)
+            publisher.setComparator(createCompletionItemComparator(filteredFallback))
+            publisher.addItems(filteredFallback)
             publisher.updateList()
             return
         }
 
-        val prefix = computePrefix(content, position)
+        // 2) 已连接：先快速展示本地候选，再异步追加 LSP completion（避免阻塞输入体验）
+        val fallbackDeduped = LinkedHashMap<String, CompletionItem>(fallbackItems.size)
+        for (item in fallbackItems) {
+            fallbackDeduped.putIfAbsent(completionKey(item), item)
+        }
 
-        val prefixLength = prefix.length
+        val filteredFallback = if (fallbackDeduped.isEmpty()) {
+            emptyList()
+        } else {
+            filterCompletionItems(content, position, fallbackDeduped.values)
+        }
 
-        val documentChangeEvent =
-            editor.eventManager.getEventListener<DocumentChangeEvent>() ?: return
+        if (filteredFallback.isNotEmpty()) {
+            publisher.setComparator(createCompletionItemComparator(filteredFallback))
+            publisher.addItems(filteredFallback)
+            publisher.updateList()
+        }
 
-        val documentChangeFuture =
-            documentChangeEvent.future
+        val prefixLength = computePrefix(content, position).length
 
-        if (documentChangeFuture?.isDone == false || documentChangeFuture?.isCompletedExceptionally == false || documentChangeFuture?.isCancelled == false) {
-            runCatching {
-                documentChangeFuture.get(Timeout[Timeouts.WILLSAVE].toLong(), TimeUnit.MILLISECONDS)
+        val documentChangeEvent = editor.eventManager.getEventListener<DocumentChangeEvent>()
+        val documentChangeFuture = documentChangeEvent?.future
+
+        // 如果没有任何 fallback 候选：需要在当前 completion 线程内等待一次 LSP 结果，
+        // 否则 EditorAutoCompletion 会因为 publisher.hasData()==false 直接 hide()，导致结果“闪一下就没了”。
+        if (filteredFallback.isEmpty()) {
+            if (documentChangeFuture != null) {
+                runCatching {
+                    documentChangeFuture.get(Timeout[Timeouts.WILLSAVE].toLong(), TimeUnit.MILLISECONDS)
+                }
             }
-        }
 
-        val completionList = ArrayList<CompletionItem>(fallbackItems.size + 32).apply {
-            addAll(fallbackItems)
-        }
-
-        val serverResultCompletionItems =
-            editor.coroutineScope.future {
+            val serverResultCompletionItems = editor.coroutineScope.future {
                 editor.eventManager.emitAsync(EventType.completion, position)
                     .getOrNull<List<org.eclipse.lsp4j.CompletionItem>>("completion-items")
                     ?: emptyList()
             }
 
-        try {
-            serverResultCompletionItems
-                .thenAccept { completions ->
-                    completions.forEach { completionItem: org.eclipse.lsp4j.CompletionItem ->
-                        completionList.add(
+            val rawLspItems = ArrayList<CompletionItem>(32)
+            try {
+                serverResultCompletionItems
+                    .get(Timeout[Timeouts.COMPLETION].toLong(), TimeUnit.MILLISECONDS)
+                    .forEach { completionItem ->
+                        val itemPrefixLength =
+                            lspPrefixLengthForCompletionItem(completionItem, position, prefixLength)
+                        rawLspItems.add(
                             completionItemProvider.createCompletionItem(
                                 completionItem,
                                 editor.eventManager,
-                                prefixLength
+                                itemPrefixLength
                             )
                         )
                     }
-                }.get(Timeout[Timeouts.COMPLETION].toLong(), TimeUnit.MILLISECONDS)
-        } catch (e: InterruptedException) {
-            return
-        } catch (_: Exception) {
-            // Ignore LSP completion failures and keep fallback items
-        }
-
-        val deduped = LinkedHashMap<String, CompletionItem>(completionList.size)
-        for (item in completionList) {
-            val key = buildString {
-                append(item.label?.toString().orEmpty())
-                append('\u0000')
-                append(item.kind?.value ?: -1)
+            } catch (_: InterruptedException) {
+                return
+            } catch (_: Exception) {
+                // Ignore LSP completion failures
             }
-            deduped.putIfAbsent(key, item)
+
+            val filteredLspItems = filterCompletionItems(content, position, rawLspItems)
+            if (filteredLspItems.isEmpty()) return
+
+            publisher.setComparator(createCompletionItemComparator(filteredLspItems))
+            publisher.addItems(filteredLspItems)
+            publisher.updateList()
+            return
         }
 
-        filterCompletionItems(content, position, deduped.values).let { filteredList ->
-            publisher.setComparator(createCompletionItemComparator(filteredList))
-            publisher.addItems(filteredList)
+        val existingKeys = HashSet<String>(filteredFallback.size + 32).apply {
+            for (item in filteredFallback) {
+                add(completionKey(item))
+            }
         }
 
-        publisher.updateList()
+        editor.coroutineScope.future {
+            // 尽量确保 didChange 已发送，再请求 completion（但不阻塞当前 completion 线程）
+            if (documentChangeFuture != null) {
+                runCatching {
+                    documentChangeFuture.get(Timeout[Timeouts.WILLSAVE].toLong(), TimeUnit.MILLISECONDS)
+                }
+            }
+
+            editor.eventManager.emitAsync(EventType.completion, position)
+                .getOrNull<List<org.eclipse.lsp4j.CompletionItem>>("completion-items")
+                ?: emptyList()
+        }.thenAccept { completions ->
+            if (completions.isEmpty()) return@thenAccept
+
+            val rawLspItems = buildList(completions.size) {
+                for (completionItem in completions) {
+                    val itemPrefixLength =
+                        lspPrefixLengthForCompletionItem(completionItem, position, prefixLength)
+                    val item = completionItemProvider.createCompletionItem(
+                        completionItem,
+                        editor.eventManager,
+                        itemPrefixLength
+                    )
+                    val key = completionKey(item)
+                    if (existingKeys.add(key)) {
+                        add(item)
+                    }
+                }
+            }
+
+            if (rawLspItems.isEmpty()) return@thenAccept
+
+            runCatching {
+                val filteredLspItems = filterCompletionItems(content, position, rawLspItems)
+                if (filteredLspItems.isEmpty()) return@runCatching
+
+                // comparator 对所有 items 通用；重复设置是安全的（会触发一次排序 + UI 更新）
+                publisher.setComparator(createCompletionItemComparator(filteredLspItems))
+                publisher.addItems(filteredLspItems)
+                publisher.updateList()
+            }
+        }
     }
 
     private fun computePrefix(text: ContentReference, position: CharPosition): String {
@@ -189,7 +244,9 @@ class LspLanguage(var editor: LspEditor) : Language {
         }
 
         val delimiters = triggers.toMutableList().apply {
-            addAll(listOf(" ", "\t", "\n", "\r"))
+            // `#` 对多数语言都是“分隔符”（如 C/C++/C#/... 的预处理指令），
+            // 若不加入会导致 prefix 包含 `#`，进而把 clangd 返回的 `include` 等结果过滤掉。
+            addAll(listOf(" ", "\t", "\n", "\r", "#"))
         }
 
         val s = StringBuilder()
@@ -202,7 +259,32 @@ class LspLanguage(var editor: LspEditor) : Language {
             }
             s.append(char)
         }
-        return s.toString()
+        return s.reverse().toString()
+    }
+
+    private fun lspPrefixLengthForCompletionItem(
+        completionItem: org.eclipse.lsp4j.CompletionItem,
+        position: CharPosition,
+        fallbackPrefixLength: Int,
+    ): Int {
+        val edit = completionItem.textEdit ?: return fallbackPrefixLength
+        val range = when {
+            edit.isLeft -> edit.left.range
+            edit.isRight -> edit.right.insert
+            else -> null
+        } ?: return fallbackPrefixLength
+
+        val start = range.start
+        if (start.line != position.line) return fallbackPrefixLength
+
+        val computed = position.column - start.character
+        return if (computed >= 0) computed else fallbackPrefixLength
+    }
+
+    private fun completionKey(item: CompletionItem): String = buildString {
+        append(item.label?.toString().orEmpty())
+        append('\u0000')
+        append(item.kind?.value ?: -1)
     }
 
     override fun getIndentAdvance(content: ContentReference, line: Int, column: Int): Int {

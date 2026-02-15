@@ -39,6 +39,7 @@ enum class Timeouts(val defaultTimeout: Int) {
     INLAY_HINT(2000),
     INIT(10000),
     REFERENCES(2000),
+    SEMANTIC_TOKENS(2000),
     SIGNATURE(5000),
     SHUTDOWN(5000),
     SYMBOLS(2000),

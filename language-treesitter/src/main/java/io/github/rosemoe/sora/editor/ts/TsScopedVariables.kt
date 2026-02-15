@@ -48,13 +48,15 @@ class TsScopedVariables(tree: TSTree, text: UTF16String, val spec: TsLanguageSpe
         if (spec.localsDefinitionIndices.isNotEmpty()) {
             TSQueryCursor.create().use { cursor ->
                 cursor.exec(spec.tsQuery, tree.rootNode)
-                var match = cursor.nextMatch()
                 val captures = mutableListOf<TSQueryCapture>()
-                while (match != null) {
+                while (!spec.closed && !Thread.currentThread().isInterrupted) {
+                    val match = cursor.nextMatch() ?: break
                     if (spec.queryPredicator.doPredicate(spec.predicates, text, match)) {
                         captures.addAll(match.captures)
                     }
-                    match = cursor.nextMatch()
+                }
+                if (spec.closed || Thread.currentThread().isInterrupted) {
+                    return@use
                 }
                 captures.sortBy { it.node.startByte }
                 val scopeStack = Stack<Scope>()

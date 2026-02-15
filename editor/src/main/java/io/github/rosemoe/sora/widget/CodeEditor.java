@@ -116,6 +116,7 @@ import io.github.rosemoe.sora.lang.styling.HighlightTextContainer;
 import io.github.rosemoe.sora.lang.styling.Span;
 import io.github.rosemoe.sora.lang.styling.SpanFactory;
 import io.github.rosemoe.sora.lang.styling.Styles;
+import io.github.rosemoe.sora.lang.styling.patching.PatchedSpans;
 import io.github.rosemoe.sora.lang.styling.inlayHint.InlayHintsContainer;
 import io.github.rosemoe.sora.lang.styling.inlayHint.IntSetUpdateRange;
 import io.github.rosemoe.sora.text.CharPosition;
@@ -4631,6 +4632,12 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
 
     @UiThread
     public void setStyles(@Nullable Styles styles) {
+        if (styles != null && styles.stylePatches == null && textStyles != null) {
+            styles.stylePatches = textStyles.stylePatches;
+        }
+        if (styles != null && styles.spans != null && styles.stylePatches != null && !(styles.spans instanceof PatchedSpans)) {
+            styles.spans = new PatchedSpans(styles.spans, styles.stylePatches);
+        }
         textStyles = styles;
         final boolean foldingAffectsLayout = foldingManager.onStylesUpdated(styles);
         if (highlightCurrentBlock) {
@@ -4647,6 +4654,9 @@ public class CodeEditor extends View implements ContentListener, Formatter.Forma
 
     @UiThread
     public void updateStyles(@NonNull Styles styles, @Nullable StyleUpdateRange range) {
+        if (styles.spans != null && styles.stylePatches != null && !(styles.spans instanceof PatchedSpans)) {
+            styles.spans = new PatchedSpans(styles.spans, styles.stylePatches);
+        }
         if (textStyles != styles || range == null) {
             setStyles(styles);
             return;

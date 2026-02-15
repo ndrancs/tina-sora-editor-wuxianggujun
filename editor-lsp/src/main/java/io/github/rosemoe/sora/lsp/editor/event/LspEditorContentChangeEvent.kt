@@ -30,6 +30,7 @@ import io.github.rosemoe.sora.event.Unsubscribe
 import io.github.rosemoe.sora.lsp.editor.LspEditor
 import io.github.rosemoe.sora.lsp.editor.requestDocumentColor
 import io.github.rosemoe.sora.lsp.editor.requestInlayHint
+import io.github.rosemoe.sora.lsp.editor.requestSemanticTokens
 import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.diagnostics.queryDocumentDiagnostics
 import io.github.rosemoe.sora.lsp.events.document.documentChange
@@ -37,6 +38,8 @@ import io.github.rosemoe.sora.lsp.events.inlayhint.inlayHint
 import io.github.rosemoe.sora.lsp.events.signature.signatureHelp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.Range
 import org.eclipse.lsp4j.DocumentDiagnosticReport
 
 private const val DIAGNOSTIC_QUERY_SOURCE = "sora.lsp.query"
@@ -47,6 +50,30 @@ class LspEditorContentChangeEvent(private val editor: LspEditor) :
     override fun onReceive(event: ContentChangeEvent, unsubscribe: Unsubscribe) {
         if (!editor.isConnected) {
             return
+        }
+
+        val semanticTokensRange: Range? = if (editor.isEnableSemanticTokens) {
+            val codeEditor = event.editor
+            val lineCount = codeEditor.lineCount
+            if (lineCount > 0) {
+                val paddingLines = 50
+                val changeLine = event.changeStart.line
+                val startLine = (changeLine - paddingLines).coerceAtLeast(0)
+                val endLine = (changeLine + paddingLines).coerceAtMost(lineCount - 1)
+                if (endLine >= startLine) {
+                    val endColumn = codeEditor.text.getColumnCount(endLine)
+                    Range(
+                        Position(startLine, 0),
+                        Position(endLine, endColumn)
+                    )
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } else {
+            null
         }
 
 
@@ -68,6 +95,7 @@ class LspEditorContentChangeEvent(private val editor: LspEditor) :
             // request inlay hint
             editor.requestInlayHint(event.changeStart)
             editor.requestDocumentColor()
+            editor.requestSemanticTokens(semanticTokensRange)
 
             val diagnostics =
                 editor.eventManager.emitAsync(EventType.queryDocumentDiagnostics)

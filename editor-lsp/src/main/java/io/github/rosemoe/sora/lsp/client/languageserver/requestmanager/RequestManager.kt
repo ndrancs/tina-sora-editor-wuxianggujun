@@ -90,6 +90,8 @@ import org.eclipse.lsp4j.TypeDefinitionParams
 import org.eclipse.lsp4j.UnregistrationParams
 import org.eclipse.lsp4j.WillSaveTextDocumentParams
 import org.eclipse.lsp4j.WorkspaceEdit
+import org.eclipse.lsp4j.WorkspaceSymbol
+import org.eclipse.lsp4j.WorkspaceSymbolParams
 import org.eclipse.lsp4j.ServerCapabilities
 import org.eclipse.lsp4j.jsonrpc.messages.Either
 import org.eclipse.lsp4j.jsonrpc.messages.Either3
@@ -135,6 +137,8 @@ abstract class RequestManager : LanguageClient, TextDocumentService, WorkspaceSe
     // Workspace Service
     abstract override fun didChangeConfiguration(params: DidChangeConfigurationParams)
     abstract override fun didChangeWatchedFiles(params: DidChangeWatchedFilesParams)
+    abstract override fun symbol(params: WorkspaceSymbolParams): CompletableFuture<Either<List<SymbolInformation>, List<WorkspaceSymbol?>>>?
+    abstract override fun resolveWorkspaceSymbol(unresolved: WorkspaceSymbol): CompletableFuture<WorkspaceSymbol>?
     abstract override fun executeCommand(params: ExecuteCommandParams): CompletableFuture<Any>?
 
     // Text Document Service
@@ -180,17 +184,8 @@ abstract class RequestManager : LanguageClient, TextDocumentService, WorkspaceSe
     abstract override fun colorPresentation(params: ColorPresentationParams): CompletableFuture<List<ColorPresentation>>?
     abstract override fun foldingRange(params: FoldingRangeRequestParams): CompletableFuture<List<FoldingRange>>?
 
-    // TODO: waiting sora support style patch
-    override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens> {
-        return super.semanticTokensFull(params)
-    }
-
-    override fun semanticTokensFullDelta(params: SemanticTokensDeltaParams): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>> {
-        return super.semanticTokensFullDelta(params)
-    }
-
-    override fun semanticTokensRange(params: SemanticTokensRangeParams): CompletableFuture<SemanticTokens> {
-        return super.semanticTokensRange(params)
-    }
+    abstract override fun semanticTokensFull(params: SemanticTokensParams): CompletableFuture<SemanticTokens>?
+    abstract override fun semanticTokensFullDelta(params: SemanticTokensDeltaParams): CompletableFuture<Either<SemanticTokens, SemanticTokensDelta>>?
+    abstract override fun semanticTokensRange(params: SemanticTokensRangeParams): CompletableFuture<SemanticTokens>?
 }
 

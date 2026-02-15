@@ -196,6 +196,7 @@ open class TsLanguageSpec(
     /**
      * Close flag
      */
+    @Volatile
     var closed = false
         private set
 

@@ -30,10 +30,12 @@ import io.github.rosemoe.sora.lang.styling.inlayHint.ColorInlayHint
 import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.color.documentColor
 import io.github.rosemoe.sora.lsp.events.inlayhint.inlayHint
+import io.github.rosemoe.sora.lsp.events.semantictokens.semanticTokens
 import io.github.rosemoe.sora.text.CharPosition
 import org.eclipse.lsp4j.ColorInformation
 import org.eclipse.lsp4j.InlayHint
 import org.eclipse.lsp4j.InlayHintKind
+import org.eclipse.lsp4j.Range
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
 import kotlin.math.pow
@@ -50,6 +52,15 @@ suspend fun LspEditor.requestDocumentColor() {
     if (!isEnableInlayHint) return
 
     eventManager.emitAsync(EventType.documentColor)
+}
+
+suspend fun LspEditor.requestSemanticTokens(range: Range? = null) {
+    if (!isEnableSemanticTokens) return
+    if (range == null) {
+        eventManager.emitAsync(EventType.semanticTokens)
+    } else {
+        eventManager.emitAsync(EventType.semanticTokens, range)
+    }
 }
 
 internal fun curvedTextScale(rawScale: Float): Float {
