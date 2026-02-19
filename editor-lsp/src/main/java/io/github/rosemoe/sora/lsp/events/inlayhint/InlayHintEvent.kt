@@ -71,12 +71,19 @@ class InlayHintEvent : AsyncEventListener() {
         private const val TAG = "LSP client"
         private const val INLAY_HINT_DEBOUNCE_MS = 180L
         private const val WINDOW_LINES = 200
+        private const val VIEWPORT_PADDING_LINES = 40
         private const val LSP_REQUEST_CANCELLED = -32800
     }
 
     data class InlayHintRequest(
         val editor: LspEditor,
         val position: CharPosition
+    )
+
+    private data class SafeHintWindow(
+        val upperLine: Int,
+        val lowerLine: Int,
+        val lowerColumn: Int
     )
 
     private fun getOrCreateFlow(
@@ -113,28 +120,64 @@ class InlayHintEvent : AsyncEventListener() {
         flow.tryEmit(InlayHintRequest(editor, position))
     }
 
+    private suspend fun computeSafeHintWindow(editor: LspEditor, position: CharPosition): SafeHintWindow? =
+        withContext(Dispatchers.Main.immediate) {
+            val editorInstance = editor.editor ?: return@withContext null
+            val content = editorInstance.text
+
+            // Build the query window on UI thread (same mutation thread as editor edits),
+            // which avoids line-count/column-count races seen during rapid typing.
+            repeat(3) {
+                val lineCount = content.lineCount
+                if (lineCount <= 0) {
+                    return@withContext null
+                }
+
+                val safePositionLine = position.line.coerceIn(0, lineCount - 1)
+                val viewportStart = editorInstance.firstVisibleLine.coerceIn(0, lineCount - 1)
+                val viewportEnd = editorInstance.lastVisibleLine.coerceIn(viewportStart, lineCount - 1)
+                val hasViewport = viewportEnd >= viewportStart
+
+                val upperLine = if (hasViewport) {
+                    max(0, viewportStart - VIEWPORT_PADDING_LINES)
+                } else {
+                    max(0, safePositionLine - WINDOW_LINES)
+                }
+                val lowerLine = if (hasViewport) {
+                    min(lineCount - 1, viewportEnd + VIEWPORT_PADDING_LINES)
+                } else {
+                    min(lineCount - 1, safePositionLine + WINDOW_LINES)
+                }
+
+                val lowerColumn = runCatching { content.getColumnCount(lowerLine) }.getOrNull()
+                if (lowerColumn != null) {
+                    return@withContext SafeHintWindow(
+                        upperLine = upperLine,
+                        lowerLine = lowerLine,
+                        lowerColumn = lowerColumn.coerceAtLeast(0)
+                    )
+                }
+            }
+
+            // Extremely rare: non-UI mutation or rapid teardown.
+            null
+        }
+
     private suspend fun processInlayHintRequest(request: InlayHintRequest) =
         withContext(Dispatchers.IO) {
             val editor = request.editor
-            val position = request.position
-            val content = editor.editor?.text ?: return@withContext
 
             val requestManager = editor.requestManager ?: return@withContext
 
-            // Request inlay hints around current position
-
-            val upperLine = max(0, position.line - WINDOW_LINES)
-            val lowerLine = min(content.lineCount - 1, position.line + WINDOW_LINES)
+            val hintWindow = computeSafeHintWindow(editor, request.position) ?: return@withContext
 
             val inlayHintParams = InlayHintParams(
                 editor.uri.createTextDocumentIdentifier(),
                 createRange(
-                    CharPosition(upperLine, 0),
+                    CharPosition(hintWindow.upperLine, 0),
                     CharPosition(
-                        lowerLine,
-                        content.getColumnCount(
-                            lowerLine
-                        )
+                        hintWindow.lowerLine,
+                        hintWindow.lowerColumn
                     )
                 )
             )

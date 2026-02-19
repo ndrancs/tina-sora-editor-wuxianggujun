@@ -122,7 +122,10 @@ class LspEditor(
 
             clearSubscriptions()
 
-            currentEditor.setEditorLanguage(currentLanguage)
+            val language = currentLanguage
+            if (language != null && currentEditor.editorLanguage !== language) {
+                currentEditor.setEditorLanguage(language)
+            }
             uiDelegate.attachEditor(currentEditor)
 
             if (isConnected && isEnableInlayHint) {
@@ -176,6 +179,9 @@ class LspEditor(
 
     var wrapperLanguage: Language? = null
         set(language) {
+            if (field === language) {
+                return
+            }
             field = language
             currentLanguage?.wrapperLanguage = wrapperLanguage
             val editor = _currentEditor.get()

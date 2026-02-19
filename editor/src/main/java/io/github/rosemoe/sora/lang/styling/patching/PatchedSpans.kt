@@ -44,6 +44,12 @@ class PatchedSpans(
     private val stylePatches: SparseStylePatches
 ) : ViewportAwareSpans {
 
+    /**
+     * Expose wrapped spans for analyzers that need access to concrete implementation details
+     * (for example, incremental parser state holders).
+     */
+    fun unwrapBaseSpans(): Spans = baseSpans
+
     override fun adjustOnInsert(start: CharPosition, end: CharPosition) {
         baseSpans.adjustOnInsert(start, end)
     }

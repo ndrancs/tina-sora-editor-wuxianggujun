@@ -36,7 +36,9 @@ import io.github.rosemoe.sora.editor.ts.spans.DefaultSpanFactory
 import io.github.rosemoe.sora.editor.ts.spans.TsSpanFactory
 import io.github.rosemoe.sora.lang.analysis.StyleReceiver
 import io.github.rosemoe.sora.lang.styling.CodeBlock
+import io.github.rosemoe.sora.lang.styling.Spans
 import io.github.rosemoe.sora.lang.styling.Styles
+import io.github.rosemoe.sora.lang.styling.patching.PatchedSpans
 import io.github.rosemoe.sora.lang.util.BaseAnalyzeManager
 import io.github.rosemoe.sora.text.CharPosition
 import io.github.rosemoe.sora.text.ContentReference
@@ -56,11 +58,7 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
 
     fun updateTheme(theme: TsTheme) {
         this.theme = theme
-        val spans = styles.spans
-        spans?.let {
-            if (it is LineSpansGenerator)
-                it.theme = theme
-        }
+        findLineSpansGenerator(styles.spans)?.theme = theme
     }
 
     override fun insert(start: CharPosition, end: CharPosition, insertedContent: CharSequence) {
@@ -73,7 +71,7 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                 insertedContent.toString()
             )
         )
-        (styles.spans as LineSpansGenerator?)?.apply {
+        findLineSpansGenerator(styles.spans)?.apply {
             lineCount = reference!!.lineCount
             safeTree.accessTreeIfAvailable {
                 it.edit(newTSInputEdit(start, start, end))
@@ -91,7 +89,7 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                 null
             )
         )
-        (styles.spans as LineSpansGenerator?)?.apply {
+        findLineSpansGenerator(styles.spans)?.apply {
             lineCount = reference!!.lineCount
             safeTree.accessTreeIfAvailable {
                 it.edit(newTSInputEdit(start, end, start))
@@ -129,9 +127,19 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
         val spans = styles.spans
         // IMPORTANT avoid access to the tree after destruction
         styles.spans = null
-        if (spans is LineSpansGenerator) {
-            spans.safeTree.close()
+        findLineSpansGenerator(spans)?.safeTree?.close()
+    }
+
+    private fun findLineSpansGenerator(spans: Spans?): LineSpansGenerator? {
+        var current = spans
+        while (current != null) {
+            when (current) {
+                is LineSpansGenerator -> return current
+                is PatchedSpans -> current = current.unwrapBaseSpans()
+                else -> return null
+            }
         }
+        return null
     }
 
     companion object {
@@ -179,7 +187,7 @@ open class TsAnalyzeManager(val languageSpec: TsLanguageSpec, var theme: TsTheme
                 return
             }
             if (thread == this && messageQueue.isEmpty()) {
-                val oldTree = (styles.spans as LineSpansGenerator?)?.safeTree
+                val oldTree = findLineSpansGenerator(styles.spans)?.safeTree
                 val newTree = SafeTsTree(tree!!.copy())
                 val newSpans = LineSpansGenerator(
                     newTree,

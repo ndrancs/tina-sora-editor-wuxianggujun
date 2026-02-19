@@ -34,7 +34,6 @@ import io.github.rosemoe.sora.lsp.events.semantictokens.semanticTokens
 import io.github.rosemoe.sora.text.CharPosition
 import org.eclipse.lsp4j.ColorInformation
 import org.eclipse.lsp4j.InlayHint
-import org.eclipse.lsp4j.InlayHintKind
 import org.eclipse.lsp4j.Range
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
@@ -83,17 +82,22 @@ internal fun curvedTextScale(rawScale: Float): Float {
 
 fun List<InlayHint>.inlayHintToDisplay() =
     asSequence()
-        // 更接近 CLion：默认展示参数提示，减少类型提示噪声
-        .filter { it.kind == null || it.kind == InlayHintKind.Parameter }
-        .map {
-    val text = if (it.label.isLeft) it.label.left else {
-        it.label.right[0].value
-    }
-    io.github.rosemoe.sora.lang.styling.inlayHint.TextInlayHint(
-        it.position.line,
-        it.position.character,
-        text
-    )
+        .mapNotNull { hint ->
+            val text = if (hint.label.isLeft) {
+                hint.label.left
+            } else {
+                hint.label.right
+                    .orEmpty()
+                    .joinToString(separator = "") { part -> part.value.orEmpty() }
+            }
+            if (text.isBlank()) {
+                return@mapNotNull null
+            }
+            io.github.rosemoe.sora.lang.styling.inlayHint.TextInlayHint(
+                hint.position.line,
+                hint.position.character,
+                text
+            )
         }
         .toList()
 
