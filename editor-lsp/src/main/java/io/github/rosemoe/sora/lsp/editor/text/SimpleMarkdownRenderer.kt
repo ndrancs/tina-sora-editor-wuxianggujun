@@ -20,6 +20,12 @@ import java.util.Locale
 
 object SimpleMarkdownRenderer {
     var globalImageProvider: ImageProvider = DefaultImageProvider(maxImageWidth)
+    @Volatile
+    var maxRawMarkdownLengthForRichRendering: Int = 50_000
+    @Volatile
+    var maxNormalizedMarkdownLengthForRichRendering: Int = 30_000
+    @Volatile
+    var maxNormalizedMarkdownLineCountForRichRendering: Int = 800
 
     fun render(
         markdown: String,
@@ -30,8 +36,11 @@ object SimpleMarkdownRenderer {
         headingScale: FloatArray = DEFAULT_HEADING_SCALE,
         highlighterRegistry: MarkdownCodeHighlighterRegistry = MarkdownCodeHighlighterRegistry.global
     ): Spanned {
-        val normalized = normalize(markdown)
-        val blocks = parseBlocks(normalized)
+        val prepared = prepareMarkdown(markdown)
+        if (prepared.isPlainText) {
+            return SpannableStringBuilder(prepared.text)
+        }
+        val blocks = parseBlocks(prepared.text)
         return build(
             blocks,
             boldColor,
@@ -52,8 +61,11 @@ object SimpleMarkdownRenderer {
         headingScale: FloatArray = DEFAULT_HEADING_SCALE,
         highlighterRegistry: MarkdownCodeHighlighterRegistry = MarkdownCodeHighlighterRegistry.global
     ): Spanned {
-        val normalized = normalize(markdown)
-        val blocks = parseBlocks(normalized)
+        val prepared = prepareMarkdown(markdown)
+        if (prepared.isPlainText) {
+            return SpannableStringBuilder(prepared.text)
+        }
+        val blocks = parseBlocks(prepared.text)
         return buildAsync(
             blocks,
             boldColor,
@@ -793,21 +805,100 @@ object SimpleMarkdownRenderer {
     }
 
     private fun isList(line: String): Boolean {
-        return unorderedPattern.matches(line) || orderedPattern.matches(line)
+        val trimmed = line.trimStart()
+        return isUnorderedList(trimmed) || isOrderedList(trimmed)
+    }
+
+    private fun isUnorderedList(line: String): Boolean {
+        if (line.length < 3) return false
+        val marker = line[0]
+        if (marker != '*' && marker != '-' && marker != '+') {
+            return false
+        }
+        if (!line[1].isWhitespace()) {
+            return false
+        }
+        var index = 1
+        while (index < line.length && line[index].isWhitespace()) {
+            index++
+        }
+        return index < line.length
     }
 
     private fun isOrderedList(line: String): Boolean {
-        return orderedPattern.matches(line)
+        if (line.isEmpty()) {
+            return false
+        }
+        var index = 0
+        while (index < line.length && line[index].isDigit()) {
+            index++
+        }
+        if (index == 0 || index >= line.length || line[index] != '.') {
+            return false
+        }
+        index++
+        if (index >= line.length || !line[index].isWhitespace()) {
+            return false
+        }
+        while (index < line.length && line[index].isWhitespace()) {
+            index++
+        }
+        return index < line.length
     }
 
     private fun extractListNumber(line: String): Int {
-        val match = orderedPattern.matchEntire(line) ?: return 1
-        return match.groupValues[1].toIntOrNull() ?: 1
+        val trimmed = line.trimStart()
+        if (!isOrderedList(trimmed)) {
+            return 1
+        }
+        var index = 0
+        while (index < trimmed.length && trimmed[index].isDigit()) {
+            index++
+        }
+        return trimmed.substring(0, index).toIntOrNull() ?: 1
     }
 
     private fun listMarkerEnd(line: String): Int {
-        val match = markerPattern.find(line) ?: return 0
-        return match.range.last + 1
+        if (line.isEmpty()) {
+            return 0
+        }
+        if (isUnorderedList(line)) {
+            var index = 1
+            while (index < line.length && line[index].isWhitespace()) {
+                index++
+            }
+            return index
+        }
+        if (isOrderedList(line)) {
+            var index = 0
+            while (index < line.length && line[index].isDigit()) {
+                index++
+            }
+            if (index < line.length && line[index] == '.') {
+                index++
+            }
+            while (index < line.length && line[index].isWhitespace()) {
+                index++
+            }
+            return index
+        }
+        return 0
+    }
+
+    private fun prepareMarkdown(markdown: String): PreparedMarkdown {
+        val rawLimit = maxRawMarkdownLengthForRichRendering
+        if (rawLimit > 0 && markdown.length > rawLimit) {
+            return PreparedMarkdown(markdown, true)
+        }
+        val normalized = normalize(markdown)
+        val normalizedLengthLimit = maxNormalizedMarkdownLengthForRichRendering
+        val lineLimit = maxNormalizedMarkdownLineCountForRichRendering
+        val exceedsLength = normalizedLengthLimit > 0 && normalized.length > normalizedLengthLimit
+        val exceedsLineCount = lineLimit > 0 && normalized.count { it == '\n' } > lineLimit
+        if (exceedsLength || exceedsLineCount) {
+            return PreparedMarkdown(normalized, true)
+        }
+        return PreparedMarkdown(normalized, false)
     }
 
     private fun normalize(input: String): String {
@@ -950,10 +1041,12 @@ object SimpleMarkdownRenderer {
         class Image(val url: String, val alt: String) : Inline
     }
 
+    private data class PreparedMarkdown(
+        val text: String,
+        val isPlainText: Boolean
+    )
+
     private const val SPAN_MODE = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-    private val unorderedPattern = Regex("^[\\*\\-+]\\s+.+")
-    private val orderedPattern = Regex("^(\\d+)\\.\\s+.+")
-    private val markerPattern = Regex("^(?:\\d+\\.|[\\*\\-+])\\s+")
     private val brRegex = Regex("(?i)<br\\s*/?>")
     private val headingRegex = Regex("(?is)<h([1-6])[^>]*>(.*?)</h\\1>")
     private val blockquoteRegex = Regex("(?is)<blockquote[^>]*>(.*?)</blockquote>")

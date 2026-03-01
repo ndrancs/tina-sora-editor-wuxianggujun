@@ -46,7 +46,7 @@ internal class LspEditorUIDelegate(private val editor: LspEditor) {
             if (value) {
                 currentEditorRef.get()?.let {
                     hoverWindowRef.clear()
-                    hoverWindowRef = WeakReference(HoverWindow(it, editor.coroutineScope))
+                    hoverWindowRef = WeakReference(createHoverWindow(it))
                 }
             } else {
                 hoverWindow?.setEnabled(false)
@@ -120,7 +120,7 @@ internal class LspEditorUIDelegate(private val editor: LspEditor) {
         }
 
         if (isEnableHover) {
-            hoverWindowRef = WeakReference(HoverWindow(codeEditor, editor.coroutineScope))
+            hoverWindowRef = WeakReference(createHoverWindow(codeEditor))
         }
 
         if (isEnableInlayHint) {
@@ -176,6 +176,10 @@ internal class LspEditorUIDelegate(private val editor: LspEditor) {
         }
 
         editorInstance.post { window.show(hover) }
+    }
+
+    fun applyHoverWindowOptions() {
+        hoverWindow?.let(::applyHoverWindowOptions)
     }
 
     fun showCodeActions(range: Range?, actions: List<Either<Command, CodeAction>>?) {
@@ -275,5 +279,15 @@ internal class LspEditorUIDelegate(private val editor: LspEditor) {
                 it.inlayHints = null
             }
         }
+    }
+
+    private fun createHoverWindow(codeEditor: CodeEditor): HoverWindow {
+        return HoverWindow(codeEditor, editor.coroutineScope).also(::applyHoverWindowOptions)
+    }
+
+    private fun applyHoverWindowOptions(window: HoverWindow) {
+        window.HOVER_TOOLTIP_SHOW_TIMEOUT = editor.hoverTooltipShowTimeout
+        window.hoverMarkdownFallbackDelayMillis = editor.hoverMarkdownFallbackDelayMillis
+        window.hoverMarkdownRenderCacheCapacity = editor.hoverMarkdownRenderCacheCapacity
     }
 }

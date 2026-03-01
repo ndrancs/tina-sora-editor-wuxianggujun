@@ -2,6 +2,7 @@ package io.github.rosemoe.sora.lsp.editor.hover
 
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.SpannableStringBuilder
 import android.text.method.LinkMovementMethod
 import android.util.TypedValue
 import android.view.LayoutInflater
@@ -12,7 +13,9 @@ import io.github.rosemoe.sora.lsp.R
 import io.github.rosemoe.sora.lsp.editor.curvedTextScale
 import io.github.rosemoe.sora.lsp.editor.text.SimpleMarkdownRenderer
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import org.eclipse.lsp4j.Hover
 
 class DefaultHoverLayout : HoverLayout {
@@ -27,6 +30,9 @@ class DefaultHoverLayout : HoverLayout {
     private var baselineHoverTextSize: Float? = null
     private var latestEditorTextSize: Float? = null
     private var asyncRenderJob: Job? = null
+    private var renderGeneration: Long = 0L
+    private var plainFallbackRunnable: Runnable? = null
+    private val renderCache = LinkedHashMap<Int, RenderCacheEntry>(16, 0.75f, true)
 
     override fun attach(window: HoverWindow) {
         this.window = window
@@ -47,6 +53,7 @@ class DefaultHoverLayout : HoverLayout {
         textColor = colorScheme.getColor(EditorColorScheme.HOVER_TEXT_NORMAL)
         highlightColor = colorScheme.getColor(EditorColorScheme.HOVER_TEXT_HIGHLIGHTED)
         codeTypeface = typeface
+        synchronized(renderCache) { renderCache.clear() }
         hoverTextView.setTextColor(textColor)
 
         val drawable = GradientDrawable().apply {
@@ -60,23 +67,41 @@ class DefaultHoverLayout : HoverLayout {
 
     override fun renderHover(hover: Hover) {
         val hoverText = buildHoverText(hover)
-        hoverTextView.text = SimpleMarkdownRenderer.render(
-            markdown = hoverText,
-            boldColor = highlightColor,
-            inlineCodeColor = highlightColor,
-            codeTypeface = codeTypeface,
-            linkColor = highlightColor
-        )
-        container.post { container.smoothScrollTo(0, 0) }
+        trimCacheIfNeeded()
+        val cacheKey = buildRenderKey(hoverText)
+        getCachedRender(cacheKey, hoverText)?.let { cached ->
+            ++renderGeneration
+            cancelPendingFallback()
+            asyncRenderJob?.cancel()
+            hoverTextView.text = cached
+            container.post { container.smoothScrollTo(0, 0) }
+            return
+        }
+
+        val generation = ++renderGeneration
+        schedulePlainFallback(generation, hoverText)
         asyncRenderJob?.cancel()
         asyncRenderJob = window.launchRender {
-            hoverTextView.text = SimpleMarkdownRenderer.renderAsync(
-                markdown = hoverText,
-                boldColor = highlightColor,
-                inlineCodeColor = highlightColor,
-                codeTypeface = codeTypeface,
-                linkColor = highlightColor
-            )
+            val rendered = runCatching {
+                withContext(Dispatchers.Default) {
+                    SimpleMarkdownRenderer.renderAsync(
+                        markdown = hoverText,
+                        boldColor = highlightColor,
+                        inlineCodeColor = highlightColor,
+                        codeTypeface = codeTypeface,
+                        linkColor = highlightColor
+                    )
+                }
+            }.getOrElse {
+                SpannableStringBuilder(hoverText)
+            }
+            if (generation != renderGeneration) {
+                return@launchRender
+            }
+            cancelPendingFallback()
+            putCachedRender(cacheKey, hoverText, rendered)
+            hoverTextView.text = rendered
+            container.post { container.smoothScrollTo(0, 0) }
         }.also { job ->
             job.invokeOnCompletion {
                 if (asyncRenderJob === job) {
@@ -115,6 +140,85 @@ class DefaultHoverLayout : HoverLayout {
         hoverTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX, textBaseline * curvedScale)
     }
 
+    private fun schedulePlainFallback(generation: Long, hoverText: String) {
+        cancelPendingFallback()
+        val fallback = Runnable {
+            if (generation != renderGeneration) {
+                return@Runnable
+            }
+            hoverTextView.text = hoverText
+            container.post { container.smoothScrollTo(0, 0) }
+        }
+        plainFallbackRunnable = fallback
+        hoverTextView.postDelayed(fallback, window.hoverMarkdownFallbackDelayMillis)
+    }
+
+    private fun cancelPendingFallback() {
+        val runnable = plainFallbackRunnable ?: return
+        hoverTextView.removeCallbacks(runnable)
+        plainFallbackRunnable = null
+    }
+
+    private fun getCachedRender(key: Int, hoverText: String): CharSequence? {
+        val capacity = currentCacheCapacity()
+        if (capacity <= 0) {
+            return null
+        }
+        synchronized(renderCache) {
+            val entry = renderCache[key] ?: return null
+            if (entry.markdown != hoverText) {
+                return null
+            }
+            return entry.rendered
+        }
+    }
+
+    private fun putCachedRender(key: Int, hoverText: String, rendered: CharSequence) {
+        val capacity = currentCacheCapacity()
+        if (capacity <= 0) {
+            synchronized(renderCache) {
+                renderCache.clear()
+            }
+            return
+        }
+        synchronized(renderCache) {
+            renderCache[key] = RenderCacheEntry(hoverText, rendered)
+            trimCacheLocked(capacity)
+        }
+    }
+
+    private fun buildRenderKey(hoverText: String): Int {
+        var result = hoverText.hashCode()
+        result = 31 * result + highlightColor
+        result = 31 * result + codeTypeface.style
+        return result
+    }
+
+    private fun trimCacheIfNeeded() {
+        synchronized(renderCache) {
+            trimCacheLocked(currentCacheCapacity())
+        }
+    }
+
+    private fun trimCacheLocked(capacity: Int) {
+        if (capacity <= 0) {
+            renderCache.clear()
+            return
+        }
+        while (renderCache.size > capacity) {
+            val iterator = renderCache.entries.iterator()
+            if (!iterator.hasNext()) {
+                return
+            }
+            iterator.next()
+            iterator.remove()
+        }
+    }
+
+    private fun currentCacheCapacity(): Int {
+        return window.hoverMarkdownRenderCacheCapacity.coerceAtLeast(0)
+    }
+
 
     private fun buildHoverText(hover: Hover): String {
         val hoverContents = hover.contents ?: return ""
@@ -126,5 +230,10 @@ class DefaultHoverLayout : HoverLayout {
             formatMarkupContent(markup) ?: ""
         }
     }
+
+    private data class RenderCacheEntry(
+        val markdown: String,
+        val rendered: CharSequence
+    )
 
 }

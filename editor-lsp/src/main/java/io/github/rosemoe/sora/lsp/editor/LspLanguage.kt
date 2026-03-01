@@ -56,6 +56,12 @@ import kotlin.math.min
 
 class LspLanguage(var editor: LspEditor) : Language {
 
+    private companion object {
+        private val CXX_INCLUDE_PATH_REGEX = Regex(
+            """^\s*#\s*include(?:_next)?\s*[<"][^>"]*$"""
+        )
+    }
+
     private var _formatter: Formatter? = null
 
     var wrapperLanguage: Language? = null
@@ -126,8 +132,9 @@ class LspLanguage(var editor: LspEditor) : Language {
         } else {
             filterCompletionItems(content, position, fallbackDeduped.values)
         }
+        val deferFallbackUntilLsp = shouldDeferFallbackUntilLsp(content, position)
 
-        if (filteredFallback.isNotEmpty()) {
+        if (filteredFallback.isNotEmpty() && !deferFallbackUntilLsp) {
             publisher.setComparator(createCompletionItemComparator(filteredFallback))
             publisher.addItems(filteredFallback)
             publisher.updateList()
@@ -140,7 +147,7 @@ class LspLanguage(var editor: LspEditor) : Language {
 
         // 如果没有任何 fallback 候选：需要在当前 completion 线程内等待一次 LSP 结果，
         // 否则 EditorAutoCompletion 会因为 publisher.hasData()==false 直接 hide()，导致结果“闪一下就没了”。
-        if (filteredFallback.isEmpty()) {
+        if (filteredFallback.isEmpty() || deferFallbackUntilLsp) {
             if (documentChangeFuture != null) {
                 runCatching {
                     documentChangeFuture.get(Timeout[Timeouts.WILLSAVE].toLong(), TimeUnit.MILLISECONDS)
@@ -154,19 +161,21 @@ class LspLanguage(var editor: LspEditor) : Language {
             }
 
             val rawLspItems = ArrayList<CompletionItem>(32)
+            val lspKeys = HashSet<String>(64)
             try {
                 serverResultCompletionItems
                     .get(Timeout[Timeouts.COMPLETION].toLong(), TimeUnit.MILLISECONDS)
                     .forEach { completionItem ->
                         val itemPrefixLength =
                             lspPrefixLengthForCompletionItem(completionItem, position, prefixLength)
-                        rawLspItems.add(
-                            completionItemProvider.createCompletionItem(
-                                completionItem,
-                                editor.eventManager,
-                                itemPrefixLength
-                            )
+                        val item = completionItemProvider.createCompletionItem(
+                            completionItem,
+                            editor.eventManager,
+                            itemPrefixLength
                         )
+                        if (lspKeys.add(completionKey(item))) {
+                            rawLspItems.add(item)
+                        }
                     }
             } catch (_: InterruptedException) {
                 return
@@ -175,7 +184,14 @@ class LspLanguage(var editor: LspEditor) : Language {
             }
 
             val filteredLspItems = filterCompletionItems(content, position, rawLspItems)
-            if (filteredLspItems.isEmpty()) return
+            if (filteredLspItems.isEmpty()) {
+                if (deferFallbackUntilLsp && filteredFallback.isNotEmpty()) {
+                    publisher.setComparator(createCompletionItemComparator(filteredFallback))
+                    publisher.addItems(filteredFallback)
+                    publisher.updateList()
+                }
+                return
+            }
 
             publisher.setComparator(createCompletionItemComparator(filteredLspItems))
             publisher.addItems(filteredLspItems)
@@ -279,6 +295,19 @@ class LspLanguage(var editor: LspEditor) : Language {
 
         val computed = position.column - start.character
         return if (computed >= 0) computed else fallbackPrefixLength
+    }
+
+    private fun shouldDeferFallbackUntilLsp(
+        content: ContentReference,
+        position: CharPosition,
+    ): Boolean {
+        // 仅在 C/C++ `#include` 路径补全时延后本地候选，避免与 clangd 同名项重复且插入行为不一致。
+        val wrapper = wrapperLanguage ?: return false
+        if (wrapper.javaClass.simpleName != "CxxLanguage") return false
+        val lineText = content.getLine(position.line)
+        val col = position.column.coerceIn(0, lineText.length)
+        val beforeCursor = lineText.substring(0, col)
+        return CXX_INCLUDE_PATH_REGEX.matches(beforeCursor)
     }
 
     private fun completionKey(item: CompletionItem): String = buildString {

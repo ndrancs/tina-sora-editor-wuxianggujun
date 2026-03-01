@@ -43,6 +43,7 @@ import io.github.rosemoe.sora.lsp.editor.event.LspEditorHoverEvent
 import io.github.rosemoe.sora.lsp.editor.event.LspEditorScrollEvent
 import io.github.rosemoe.sora.lsp.editor.event.LspEditorSelectionChangeEvent
 import io.github.rosemoe.sora.lsp.editor.format.LspFormatter
+import io.github.rosemoe.sora.lsp.editor.text.SimpleMarkdownRenderer
 import io.github.rosemoe.sora.lsp.events.EventType
 import io.github.rosemoe.sora.lsp.events.diagnostics.publishDiagnostics
 import io.github.rosemoe.sora.lsp.events.document.documentClose
@@ -225,6 +226,62 @@ class LspEditor(
         get() = uiDelegate.isEnableSignatureHelp
         set(value) {
             uiDelegate.isEnableSignatureHelp = value
+        }
+
+    /**
+     * Hover popup show delay in milliseconds.
+     */
+    var hoverTooltipShowTimeout: Long = 1000L
+        set(value) {
+            field = value.coerceAtLeast(0L)
+            uiDelegate.applyHoverWindowOptions()
+        }
+
+    /**
+     * Delay before showing plain-text fallback while Markdown rendering is running.
+     */
+    var hoverMarkdownFallbackDelayMillis: Long = 120L
+        set(value) {
+            field = value.coerceAtLeast(0L)
+            uiDelegate.applyHoverWindowOptions()
+        }
+
+    /**
+     * LRU cache capacity for rendered hover Markdown. Set to 0 to disable cache.
+     */
+    var hoverMarkdownRenderCacheCapacity: Int = 24
+        set(value) {
+            field = value.coerceAtLeast(0)
+            uiDelegate.applyHoverWindowOptions()
+        }
+
+    /**
+     * Global raw Markdown length limit for rich hover rendering. Set to 0 to disable length check.
+     */
+    var hoverMarkdownRichRenderRawLengthLimit: Int
+        get() = SimpleMarkdownRenderer.maxRawMarkdownLengthForRichRendering
+        set(value) {
+            SimpleMarkdownRenderer.maxRawMarkdownLengthForRichRendering = value.coerceAtLeast(0)
+        }
+
+    /**
+     * Global normalized Markdown length limit for rich hover rendering. Set to 0 to disable length check.
+     */
+    var hoverMarkdownRichRenderNormalizedLengthLimit: Int
+        get() = SimpleMarkdownRenderer.maxNormalizedMarkdownLengthForRichRendering
+        set(value) {
+            SimpleMarkdownRenderer.maxNormalizedMarkdownLengthForRichRendering =
+                value.coerceAtLeast(0)
+        }
+
+    /**
+     * Global normalized Markdown line-count limit for rich hover rendering. Set to 0 to disable line check.
+     */
+    var hoverMarkdownRichRenderLineLimit: Int
+        get() = SimpleMarkdownRenderer.maxNormalizedMarkdownLineCountForRichRendering
+        set(value) {
+            SimpleMarkdownRenderer.maxNormalizedMarkdownLineCountForRichRendering =
+                value.coerceAtLeast(0)
         }
 
     @get:Experimental

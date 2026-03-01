@@ -22,8 +22,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import org.eclipse.lsp4j.Hover
-import org.eclipse.lsp4j.MarkupContent
-import org.eclipse.lsp4j.jsonrpc.messages.Either
 
 open class HoverWindow(
     editor: CodeEditor,
@@ -56,6 +54,24 @@ open class HoverWindow(
     var alwaysShowOnTouchHover = true
 
     var HOVER_TOOLTIP_SHOW_TIMEOUT = 1000L
+
+    /**
+     * Delay before temporarily showing plain text when Markdown rendering is still running.
+     * Set to 0 for immediate plain fallback.
+     */
+    var hoverMarkdownFallbackDelayMillis: Long = 120L
+        set(value) {
+            field = value.coerceAtLeast(0L)
+        }
+
+    /**
+     * LRU cache capacity for rendered hover Markdown.
+     * Set to 0 to disable cache.
+     */
+    var hoverMarkdownRenderCacheCapacity: Int = 24
+        set(value) {
+            field = value.coerceAtLeast(0)
+        }
 
     var layout: HoverLayout
         get() = layoutImpl
